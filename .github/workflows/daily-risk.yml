@@ -2,6 +2,13 @@ name: Daily Market Risk
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - daily_risk.py
+      - requirements.txt
+      - .github/workflows/daily-risk.yml
   schedule:
     # 22:15 UTC = 18:15 Toronto during daylight time / 17:15 during standard time.
     # This is safely after the regular US market close year-round.
