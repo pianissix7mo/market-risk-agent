@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - daily_risk.py
+      - generate_media.py
       - requirements.txt
       - .github/workflows/daily-risk.yml
   schedule:
@@ -24,7 +25,7 @@ concurrency:
 jobs:
   run-daily-risk:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out main
@@ -39,7 +40,12 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies
+      - name: Install system media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+
+      - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
 
       - name: Generate latest market-risk JSON
@@ -48,22 +54,79 @@ jobs:
       - name: Validate JSON
         run: python -m json.tool output/latest_data.json > /dev/null
 
-      - name: Upload JSON artifact
+      - name: Generate four cards and 15-second Short
+        run: python generate_media.py --input output/latest_data.json --output-dir output/media
+
+      - name: Validate generated media
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          cards = sorted(Path("output/media").glob("*.png"))
+          assert len(cards) == 4, f"Expected 4 cards, got {len(cards)}"
+          for card in cards:
+              with Image.open(card) as image:
+                  assert image.size == (1080, 1920), f"Unexpected size for {card}: {image.size}"
+          video = Path("output/media/market_risk_short.mp4")
+          assert video.exists() and video.stat().st_size > 100_000, "Short video missing or too small"
+          print("Validated four 1080x1920 cards and the Short video.")
+          PY
+          duration=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 output/media/market_risk_short.mp4)
+          python - "$duration" <<'PY'
+          import sys
+          duration = float(sys.argv[1])
+          assert 14.5 <= duration <= 15.5, f"Unexpected video duration: {duration}"
+          print(f"Video duration: {duration:.2f}s")
+          PY
+
+      - name: Upload JSON, cards and Short artifact
         uses: actions/upload-artifact@v4
         with:
-          name: latest-market-risk-json
-          path: output/latest_data.json
+          name: market-risk-media-${{ github.run_number }}
+          path: |
+            output/latest_data.json
+            output/media/*.png
+            output/media/market_risk_short.mp4
           if-no-files-found: error
           retention-days: 30
 
-      - name: Commit updated JSON
+      - name: Commit updated JSON to main
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add output/latest_data.json
           if git diff --cached --quiet; then
-            echo "No data change to commit."
+            echo "No JSON change to commit."
           else
             git commit -m "Update daily market risk data"
             git push origin HEAD:main
           fi
+
+      - name: Publish only the latest media to latest-media branch
+        run: |
+          media_tmp=$(mktemp -d)
+          cp output/latest_data.json "$media_tmp/latest_data.json"
+          cp -R output/media "$media_tmp/media"
+
+          git clean -fdx
+          git switch --orphan latest-media
+          git rm -rf . || true
+          cp -R "$media_tmp"/* .
+
+          cat > README.md <<'EOF'
+          # Latest Market Risk Media
+
+          This branch is automatically replaced on every successful run and contains only the latest files:
+
+          - `latest_data.json`
+          - `media/01_volatility.png`
+          - `media/02_sentiment.png`
+          - `media/03_macro.png`
+          - `media/04_summary.png`
+          - `media/market_risk_short.mp4`
+          EOF
+
+          git add README.md latest_data.json media
+          git commit -m "Publish latest market risk media"
+          git push --force origin HEAD:latest-media
