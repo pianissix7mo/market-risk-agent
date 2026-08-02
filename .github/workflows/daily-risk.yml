@@ -9,10 +9,11 @@ on:
       - daily_risk.py
       - generate_media.py
       - generate_daily_short.py
+      - assets/audio/a_night_alone_16s.mp3
       - requirements.txt
       - .github/workflows/daily-risk.yml
   schedule:
-    # 22:15 UTC = 18:15 Toronto during daylight time / 17:15 during standard time.
+    # 22:15 UTC = 18:15 Toronto during daylight time.
     - cron: "15 22 * * 1-5"
 
 permissions:
@@ -55,30 +56,28 @@ jobs:
       - name: Validate JSON
         run: python -m json.tool output/latest_data.json > /dev/null
 
+      - name: Confirm fixed music exists
+        run: |
+          test -f assets/audio/a_night_alone_16s.mp3
+          duration=$(ffprobe -v error \
+            -show_entries format=duration \
+            -of default=nw=1:nk=1 \
+            assets/audio/a_night_alone_16s.mp3)
+          python - "$duration" <<'PY'
+          import sys
+          duration = float(sys.argv[1])
+          assert 15.8 <= duration <= 16.2, duration
+          print(f"Fixed music duration: {duration:.2f}s")
+          PY
+
       - name: Generate four cards and 16-second Short
         run: |
-          mkdir -p output
-          set +e
-          python generate_daily_short.py --input output/latest_data.json --output-dir output/media > output/daily_short.log 2>&1
-          code=$?
-          cat output/daily_short.log
-          echo "$code" > output/daily_short_exit_code.txt
-          exit "$code"
+          mkdir -p output/media
+          python generate_daily_short.py \
+            --input output/latest_data.json \
+            --output-dir output/media
 
-      - name: Save render log
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add output/daily_short.log output/daily_short_exit_code.txt
-          if git diff --cached --quiet; then
-            echo "No log change."
-          else
-            git commit -m "Record daily Short render result"
-            git push origin HEAD:main
-          fi
-
-      - name: Validate generated media and audio
+      - name: Validate generated images
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -86,42 +85,95 @@ jobs:
 
           cards = sorted(Path("output/media").glob("*.png"))
           assert len(cards) == 4, f"Expected 4 cards, got {len(cards)}"
+
+          expected = {
+              "01_volatility.png",
+              "02_sentiment.png",
+              "03_macro.png",
+              "04_summary.png",
+          }
+          assert {card.name for card in cards} == expected
+
           for card in cards:
               with Image.open(card) as image:
-                  assert image.size == (1080, 1920), f"Unexpected size for {card}: {image.size}"
+                  assert image.size == (1080, 1920), (
+                      f"Unexpected size for {card}: {image.size}"
+                  )
 
-          videos = list(Path("output/media").glob("Market Risk Monitor *.mp4"))
-          assert len(videos) == 1, f"Expected one dated Short, got {videos}"
-          assert videos[0].stat().st_size > 100_000, "Short video missing or too small"
-          print(f"Validated four cards and {videos[0].name}")
+          print("Validated four 1080x1920 cards.")
           PY
 
-          video=$(find output/media -maxdepth 1 -name 'Market Risk Monitor *.mp4' -print -quit)
-          duration=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$video")
-          audio_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$video")
-          python - "$duration" "$audio_codec" <<'PY'
+      - name: Validate final mobile-compatible MP4
+        run: |
+          video=$(find output/media -maxdepth 1 \
+            -name 'Market Risk Monitor *.mp4' \
+            -print -quit)
+
+          test -n "$video"
+          test -s "$video"
+
+          duration=$(ffprobe -v error \
+            -show_entries format=duration \
+            -of default=nw=1:nk=1 "$video")
+
+          width=$(ffprobe -v error -select_streams v:0 \
+            -show_entries stream=width \
+            -of default=nw=1:nk=1 "$video")
+
+          height=$(ffprobe -v error -select_streams v:0 \
+            -show_entries stream=height \
+            -of default=nw=1:nk=1 "$video")
+
+          video_codec=$(ffprobe -v error -select_streams v:0 \
+            -show_entries stream=codec_name \
+            -of default=nw=1:nk=1 "$video")
+
+          profile=$(ffprobe -v error -select_streams v:0 \
+            -show_entries stream=profile \
+            -of default=nw=1:nk=1 "$video")
+
+          pix_fmt=$(ffprobe -v error -select_streams v:0 \
+            -show_entries stream=pix_fmt \
+            -of default=nw=1:nk=1 "$video")
+
+          audio_codec=$(ffprobe -v error -select_streams a:0 \
+            -show_entries stream=codec_name \
+            -of default=nw=1:nk=1 "$video")
+
+          python - \
+            "$duration" \
+            "$width" \
+            "$height" \
+            "$video_codec" \
+            "$profile" \
+            "$pix_fmt" \
+            "$audio_codec" <<'PY'
           import sys
 
           duration = float(sys.argv[1])
-          audio_codec = sys.argv[2].strip()
-          assert 15.8 <= duration <= 16.2, f"Unexpected video duration: {duration}"
-          assert audio_codec, "Generated Short does not contain an audio stream"
-          print(f"Video duration: {duration:.2f}s; audio codec: {audio_codec}")
+          width = int(sys.argv[2])
+          height = int(sys.argv[3])
+          video_codec = sys.argv[4].strip().lower()
+          profile = sys.argv[5].strip().lower()
+          pix_fmt = sys.argv[6].strip().lower()
+          audio_codec = sys.argv[7].strip().lower()
+
+          assert 15.8 <= duration <= 16.2, duration
+          assert width == 1080, width
+          assert height == 1920, height
+          assert video_codec == "h264", video_codec
+          assert profile in {"baseline", "constrained baseline"}, profile
+          assert pix_fmt == "yuv420p", pix_fmt
+          assert audio_codec == "aac", audio_codec
+
+          print(
+              f"Validated MP4: {width}x{height}, "
+              f"{duration:.2f}s, {video_codec}/{profile}, "
+              f"{pix_fmt}, audio={audio_codec}"
+          )
           PY
 
-      - name: Save fixed music and latest JSON to main
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add output/latest_data.json assets/audio/a_night_alone_16s.mp3
-          if git diff --cached --quiet; then
-            echo "No data or music change to commit."
-          else
-            git commit -m "Save fixed Short music and latest data"
-            git push origin HEAD:main
-          fi
-
-      - name: Upload JSON, cards and Short artifact
+      - name: Upload latest media artifact
         uses: actions/upload-artifact@v4
         with:
           name: market-risk-media-${{ github.run_number }}
@@ -131,6 +183,22 @@ jobs:
             output/media/*.mp4
           if-no-files-found: error
           retention-days: 30
+
+      - name: Commit updated JSON to main
+        if: github.event_name != 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add output/latest_data.json
+
+          if git diff --cached --quiet; then
+            echo "No JSON change to commit."
+          else
+            git commit -m "Update daily market risk data"
+            git push origin HEAD:main
+          fi
 
       - name: Publish only the latest media to latest-media branch
         run: |
@@ -146,7 +214,9 @@ jobs:
           cat > README.md <<'EOF'
           # Latest Market Risk Media
 
-          This branch is automatically replaced on every successful run and contains only the latest files:
+          This branch is automatically replaced on every successful run.
+
+          Files:
 
           - `latest_data.json`
           - `media/01_volatility.png`
