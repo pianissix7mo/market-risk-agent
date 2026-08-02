@@ -48,7 +48,10 @@ def num(value: Any, digits: int = 2, suffix: str = "") -> str:
 
 def pct(value: Any) -> str:
     try:
-        return f"P{int(round(float(value)))}"
+        numeric = float(value)
+        # Keep normal percentile labels compact, but retain one decimal at
+        # extreme tails so P1.19 is not misleadingly flattened to P1.
+        return f"P{numeric:.1f}" if numeric < 5 or numeric > 95 else f"P{int(round(numeric))}"
     except (TypeError, ValueError):
         return "P--"
 
@@ -354,13 +357,12 @@ def render_summary(data: dict[str, Any], output: Path) -> None:
         text(d, v, f"val-{i}-label", (x0 + 14, 884, x1 - 14, 915), label, 22, minimum=16, fill=COL["muted"], align="center", max_lines=1)
         text(d, v, f"val-{i}", (x0 + 14, 920, x1 - 14, 980), value, 48, minimum=34, bold=True, align="center", valign="middle", max_lines=1)
         text(d, v, f"val-{i}-foot", (x0 + 14, 988, x1 - 14, 1014), foot, 21, minimum=16, bold=i == 1, fill=fc, align="center", max_lines=1)
-    card(im, (L, 1086, R, 1588), "#10263C")
-    text(d, v, "reason-title", (L + 34, 1112, R - 34, 1156), "综合判断原因", 31, minimum=25, bold=True, fill=COL["blue"], max_lines=1)
-    details = [i for i in o.get("details", []) if i.get("included", True)]
-    reasons = "\n".join(f"• {i.get('indicator', '--')}：{i.get('reason', '--')}" for i in details) or "综合指标暂时没有形成明显方向。"
-    text(d, v, "reasons", (L + 40, 1172, R - 40, 1552), reasons, 23, minimum=15, fill=COL["muted"])
-    card(im, (L, 1612, R, 1738), "#121D29", "#4A3E35", 20)
-    text(d, v, "risk-title", (L + 28, 1632, L + 190, 1665), "投资风险提示", 21, minimum=17, bold=True, fill=COL["yellow"], max_lines=1)
-    text(d, v, "risk", (L + 210, 1628, R - 28, 1718), str(o.get("disclaimer", "仅供参考，不构成任何投资建议。")), 22, minimum=16, fill=COL["muted"], align="center", valign="middle", max_lines=2)
+    card(im, (L, 1086, R, 1738), "#10263C")
+    text(d, v, "video-kicker", (L + 42, 1124, R - 42, 1170), "想知道这些指标怎么解读？", 31, minimum=24, bold=True, fill=COL["blue"], align="center", max_lines=1)
+    text(d, v, "video-title", (L + 54, 1212, R - 54, 1372), "完整逻辑与使用方法\n请看我的解释视频", 54, minimum=38, bold=True, align="center", valign="middle", gap=14, max_lines=2)
+    card(im, (L + 92, 1422, R - 92, 1510), COL["chip"], "#315777", 18)
+    text(d, v, "video-cta", (L + 116, 1440, R - 116, 1492), "Market Risk Monitor 指标解析", 30, minimum=23, bold=True, fill=COL["blue"], align="center", valign="middle", max_lines=1)
+    text(d, v, "video-topics", (L + 70, 1560, R - 70, 1610), "VIX · VXN · 市场情绪 · 宏观压力 · QQQ估值", 25, minimum=19, fill=COL["muted"], align="center", max_lines=1)
+    text(d, v, "video-note", (L + 70, 1640, R - 70, 1692), "频道内搜索上方标题即可观看", 24, minimum=18, fill=COL["dim"], align="center", max_lines=1)
     footer(im, v)
     _save(im, v, output)
