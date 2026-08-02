@@ -58,7 +58,28 @@ jobs:
         run: python -m json.tool output/latest_data.json > /dev/null
 
       - name: Generate four cards and 15-second Short with music
-        run: python generate_media_audio.py --input output/latest_data.json --output-dir output/media
+        id: render
+        run: |
+          mkdir -p output
+          set +e
+          python generate_media_audio.py --input output/latest_data.json --output-dir output/media > output/render.log 2>&1
+          render_code=$?
+          echo "$render_code" > output/render_exit_code.txt
+          cat output/render.log
+          exit "$render_code"
+
+      - name: Commit render diagnostics
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/render.log output/render_exit_code.txt
+          if git diff --cached --quiet; then
+            echo "No render diagnostics change to commit."
+          else
+            git commit -m "Record media render diagnostics"
+            git push origin HEAD:main
+          fi
 
       - name: Validate generated media and audio
         run: |
