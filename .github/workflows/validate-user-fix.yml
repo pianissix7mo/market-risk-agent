@@ -1,0 +1,78 @@
+name: Validate User Requested Media Fix
+
+on:
+  pull_request:
+    paths:
+      - generate_media.py
+      - .github/workflows/validate-user-fix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out requested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install -r requirements.txt
+      - name: Generate media
+        run: |
+          rm -rf output/media
+          python generate_daily_short.py --input output/latest_data.json --output-dir output/media
+      - name: Validate requested changes
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+          from PIL import Image
+
+          cards = sorted(Path("output/media").glob("*.png"))
+          assert len(cards) == 4, cards
+          for card in cards:
+              with Image.open(card) as image:
+                  assert image.size == (1080, 1920), (card, image.size)
+
+          source = Path("generate_media.py").read_text(encoding="utf-8")
+          assert "综合判断原因" not in source
+          assert "risk-title" not in source
+          assert "Market Risk Monitor 指标解析" in source
+          assert 'return f"P{numeric:.1f}" if numeric < 5' in source
+
+          video = next(Path("output/media").glob("Market Risk Monitor *.mp4"))
+          probe = json.loads(subprocess.check_output([
+              "ffprobe", "-v", "error", "-show_streams", "-show_format",
+              "-of", "json", str(video),
+          ], text=True))
+          streams = probe["streams"]
+          v = next(s for s in streams if s.get("codec_type") == "video")
+          a = next(s for s in streams if s.get("codec_type") == "audio")
+          assert 15.8 <= float(probe["format"]["duration"]) <= 16.2
+          assert (int(v["width"]), int(v["height"])) == (1080, 1920)
+          assert v["codec_name"] == "h264"
+          assert v["pix_fmt"] == "yuv420p"
+          assert a["codec_name"] == "aac"
+          print("Validated new page 4, precise tail percentile formatting, and MP4.")
+          PY
+      - name: Upload confirmation media
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-risk-user-fix-${{ github.run_number }}
+          path: |
+            output/media/*.png
+            output/media/*.mp4
+          if-no-files-found: error
+          retention-days: 30
