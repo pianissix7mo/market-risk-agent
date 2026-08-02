@@ -21,8 +21,10 @@ on:
       - requirements.txt
       - .github/workflows/daily-risk.yml
   schedule:
-    # 22:15 UTC = 18:15 Toronto during daylight time.
-    - cron: "15 22 * * 1-5"
+    # GitHub cron uses UTC. Run both possible UTC hours for 21:00 Toronto;
+    # the timezone gate below permits only the matching summer/winter run.
+    - cron: "0 1 * * 2-6"
+    - cron: "0 2 * * 2-6"
 
 permissions:
   contents: write
@@ -32,7 +34,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  toronto-schedule-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check Toronto schedule window
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          event_name = os.environ["EVENT_NAME"]
+          now = datetime.now(ZoneInfo("America/Toronto"))
+          should_run = (
+              event_name != "schedule"
+              or (now.weekday() < 5 and now.hour == 21)
+          )
+          print(
+              f"Toronto time: {now:%Y-%m-%d %H:%M:%S %Z}; "
+              f"event={event_name}; should_run={should_run}"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"should_run={str(should_run).lower()}\n")
+          PY
+
   run-daily-risk:
+    needs: toronto-schedule-gate
+    if: needs.toronto-schedule-gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
