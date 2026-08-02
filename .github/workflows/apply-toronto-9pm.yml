@@ -1,0 +1,129 @@
+name: Apply Toronto 9 PM Schedule
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/daily-risk.yml
+      - .github/workflows/apply-toronto-9pm.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update schedule and timezone guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/daily-risk.yml')
+          source = path.read_text(encoding='utf-8')
+
+          old_schedule = '''  schedule:
+              # 22:15 UTC = 18:15 Toronto during daylight time.
+              - cron: "15 22 * * 1-5"
+          '''.replace('          ', '')
+          new_schedule = '''  schedule:
+              # GitHub cron uses UTC. Run both possible UTC hours for 21:00 Toronto;
+              # the timezone gate below permits only the matching summer/winter run.
+              - cron: "0 1 * * 2-6"
+              - cron: "0 2 * * 2-6"
+          '''.replace('          ', '')
+
+          dollar = '$'
+          gate = f'''jobs:
+            toronto-schedule-gate:
+              runs-on: ubuntu-latest
+              outputs:
+                should_run: {dollar}{{{{ steps.check.outputs.should_run }}}}
+              steps:
+                - name: Check Toronto schedule window
+                  id: check
+                  env:
+                    EVENT_NAME: {dollar}{{{{ github.event_name }}}}
+                  run: |
+                    python - <<'PY'
+                    import os
+                    from datetime import datetime
+                    from zoneinfo import ZoneInfo
+
+                    event_name = os.environ["EVENT_NAME"]
+                    now = datetime.now(ZoneInfo("America/Toronto"))
+                    should_run = (
+                        event_name != "schedule"
+                        or (now.weekday() < 5 and now.hour == 21)
+                    )
+                    print(
+                        f"Toronto time: {{now:%Y-%m-%d %H:%M:%S %Z}}; "
+                        f"event={{event_name}}; should_run={{should_run}}"
+                    )
+                    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                        output.write(f"should_run={{str(should_run).lower()}}\\n")
+                    PY
+
+            run-daily-risk:
+              needs: toronto-schedule-gate
+              if: needs.toronto-schedule-gate.outputs.should_run == 'true'
+              runs-on: ubuntu-latest
+          '''.replace('          ', '')
+
+          old_jobs = '''jobs:
+            run-daily-risk:
+              runs-on: ubuntu-latest
+          '''.replace('          ', '')
+
+          if new_schedule not in source:
+              if old_schedule not in source:
+                  raise SystemExit('Expected old schedule block not found')
+              source = source.replace(old_schedule, new_schedule)
+
+          if 'toronto-schedule-gate:' not in source:
+              if old_jobs not in source:
+                  raise SystemExit('Expected jobs block not found')
+              source = source.replace(old_jobs, gate)
+
+          path.write_text(source, encoding='utf-8')
+          PY
+
+      - name: Validate workflow structure
+        run: |
+          python -m pip install pyyaml
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          path = Path('.github/workflows/daily-risk.yml')
+          source = path.read_text(encoding='utf-8')
+          parsed = yaml.load(source, Loader=yaml.BaseLoader)
+          schedules = parsed['on']['schedule']
+          crons = [item['cron'] for item in schedules]
+          assert crons == ['0 1 * * 2-6', '0 2 * * 2-6'], crons
+          jobs = parsed['jobs']
+          assert 'toronto-schedule-gate' in jobs
+          assert jobs['run-daily-risk']['needs'] == 'toronto-schedule-gate'
+          assert jobs['run-daily-risk']['if'] == "needs.toronto-schedule-gate.outputs.should_run == 'true'"
+          assert 'America/Toronto' in source
+          assert 'now.hour == 21' in source
+          print('Validated Toronto 21:00 weekday schedule with DST guard.')
+          PY
+
+      - name: Commit schedule change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/daily-risk.yml
+          if git diff --cached --quiet; then
+            echo "No schedule change to commit."
+          else
+            git commit -m "Run daily risk at 9 PM Toronto time"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
