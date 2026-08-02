@@ -1,0 +1,78 @@
+name: Apply Related Video CTA
+
+on:
+  pull_request:
+    paths:
+      - generate_media.py
+      - .github/workflows/apply-related-video-cta.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update page 4 CTA
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("generate_media.py")
+          source = path.read_text(encoding="utf-8")
+          old = '    text(d, v, "video-note", (L + 70, 1640, R - 70, 1692), "频道内搜索上方标题即可观看", 24, minimum=18, fill=COL["dim"], align="center", max_lines=1)'
+          new = '    text(d, v, "video-note", (L + 70, 1628, R - 70, 1698), "频道内搜索上方标题即可观看\\n也可点击 Related Video 直接观看", 23, minimum=18, fill=COL["dim"], align="center", valign="middle", gap=8, max_lines=2)'
+          if new in source:
+              print("CTA already updated.")
+          elif old in source:
+              path.write_text(source.replace(old, new), encoding="utf-8")
+              print("Updated page 4 CTA.")
+          else:
+              raise SystemExit("Expected page 4 CTA line not found")
+          PY
+
+      - name: Validate rendering
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install -r requirements.txt
+          rm -rf output/media
+          python generate_daily_short.py --input output/latest_data.json --output-dir output/media
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          source = Path("generate_media.py").read_text(encoding="utf-8")
+          assert "频道内搜索上方标题即可观看\\n也可点击 Related Video 直接观看" in source
+          page = Path("output/media/04_summary.png")
+          with Image.open(page) as image:
+              assert image.size == (1080, 1920)
+          print("Validated updated page 4 CTA and media generation.")
+          PY
+
+      - name: Upload page 4 preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: related-video-cta-preview-${{ github.run_number }}
+          path: output/media/04_summary.png
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Commit CTA change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add generate_media.py
+          if git diff --cached --quiet; then
+            echo "No code change to commit."
+          else
+            git commit -m "Add Related Video CTA to summary page"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
