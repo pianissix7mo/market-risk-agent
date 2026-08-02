@@ -1,6 +1,6 @@
 {
   "market_date": "2026-07-31",
-  "generated_at": "2026-08-02T12:15:45+00:00",
+  "generated_at": "2026-08-02T16:36:27+00:00",
   "volatility": {
     "vix": {
       "label": "VIX",
@@ -149,7 +149,7 @@
         "included": true
       }
     ],
-    "method_note": "VIX、VXN、Put/Call、Fear & Greed及AAII采用反向情绪信号；Gold/Copper与10Y Treasury采用方向信号；估值只读取QQQ的PE与Forward PE。",
+    "method_note": "VIX、VXN、Put/Call、Fear & Greed、AAII及Gold/Copper采用反向情绪信号；10Y Treasury采用方向信号；估值只读取QQQ的PE与Forward PE。",
     "disclaimer": "仅供参考，不构成任何投资建议。"
   },
   "errors": []
