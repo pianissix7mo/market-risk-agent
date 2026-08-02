@@ -99,8 +99,8 @@ def aaii_signal(spread):
 
 def gold_copper_signal(rank):
     if rank is None: return "中立", "黄金/铜比缺少过去3年分位数据"
-    if rank >= 75: return "偏卖", "黄金/铜比位于过去3年高位，避险偏好较强"
-    if rank <= 25: return "偏买", "黄金/铜比位于过去3年低位，增长与风险偏好较强"
+    if rank >= 75: return "偏买", "黄金/铜比位于过去3年高位，避险情绪较强，反向信号偏买"
+    if rank <= 25: return "偏卖", "黄金/铜比位于过去3年低位，风险偏好较强，反向信号偏卖"
     return "中立", "黄金/铜比位于过去3年中性区间"
 
 
@@ -224,7 +224,7 @@ def overall(vol, macro, valuation):
     qqq = valuation["nasdaq100"]; signal, reason = qqq_pe_signal(qqq["forward_pe"])
     details.append({"indicator": "纳斯达克100 Forward PE", "signal": signal, "reason": reason, "included": qqq["forward_pe"] is not None})
     valid = [x for x in details if x["included"]]; buy = sum(x["signal"] == "偏买" for x in valid); neutral = sum(x["signal"] == "中立" for x in valid); sell = sum(x["signal"] == "偏卖" for x in valid); score = buy - sell
-    return {"result": "偏买" if score >= 2 else "偏卖" if score <= -2 else "中立", "score": score, "buy_count": buy, "neutral_count": neutral, "sell_count": sell, "available_count": len(valid), "missing_count": len(details) - len(valid), "details": details, "method_note": "VIX、VXN、Put/Call、Fear & Greed及AAII采用反向情绪信号；Gold/Copper与10Y Treasury采用方向信号；估值只读取QQQ的PE与Forward PE。", "disclaimer": "仅供参考，不构成任何投资建议。"}
+    return {"result": "偏买" if score >= 2 else "偏卖" if score <= -2 else "中立", "score": score, "buy_count": buy, "neutral_count": neutral, "sell_count": sell, "available_count": len(valid), "missing_count": len(details) - len(valid), "details": details, "method_note": "VIX、VXN、Put/Call、Fear & Greed、AAII及Gold/Copper采用反向情绪信号；10Y Treasury采用方向信号；估值只读取QQQ的PE与Forward PE。", "disclaimer": "仅供参考，不构成任何投资建议。"}
 
 
 def main():
