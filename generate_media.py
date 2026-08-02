@@ -363,6 +363,6 @@ def render_summary(data: dict[str, Any], output: Path) -> None:
     card(im, (L + 92, 1422, R - 92, 1510), COL["chip"], "#315777", 18)
     text(d, v, "video-cta", (L + 116, 1440, R - 116, 1492), "Market Risk Monitor 指标解析", 30, minimum=23, bold=True, fill=COL["blue"], align="center", valign="middle", max_lines=1)
     text(d, v, "video-topics", (L + 70, 1560, R - 70, 1610), "VIX · VXN · 市场情绪 · 宏观压力 · QQQ估值", 25, minimum=19, fill=COL["muted"], align="center", max_lines=1)
-    text(d, v, "video-note", (L + 70, 1640, R - 70, 1692), "频道内搜索上方标题即可观看", 24, minimum=18, fill=COL["dim"], align="center", max_lines=1)
+    text(d, v, "video-note", (L + 70, 1628, R - 70, 1698), "频道内搜索上方标题即可观看\n也可点击 Related Video 直接观看", 23, minimum=18, fill=COL["dim"], align="center", valign="middle", gap=8, max_lines=2)
     footer(im, v)
     _save(im, v, output)
