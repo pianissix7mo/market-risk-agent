@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Build whisper.cpp
+      - name: Build whisper.cpp static
         run: |
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
-          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
           cmake --build whisper.cpp/build --config Release -j 2
       - name: Download multilingual base model
         run: |
@@ -26,6 +26,6 @@ jobs:
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-base-linux-bundle
+          name: whisper-base-linux-static-bundle
           path: bundle/*
           retention-days: 1
