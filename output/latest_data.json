@@ -1,6 +1,6 @@
 {
   "market_date": "2026-07-31",
-  "generated_at": "2026-08-02T00:31:42+00:00",
+  "generated_at": "2026-08-02T11:11:39+00:00",
   "volatility": {
     "vix": {
       "label": "VIX",
@@ -54,12 +54,12 @@
       "explanation": "AAII悲观情绪明显高于乐观情绪，反向信号偏买"
     },
     "gold_copper_ratio": {
-      "value": 629.133,
+      "value": 635.2177,
       "date": "2026-07-31",
       "source": "Yahoo Finance GC=F / HG=F",
-      "percentile_1y": 0.79,
-      "percentile_3y": 48.28,
-      "percentile_5y": 68.89,
+      "percentile_1y": 1.19,
+      "percentile_3y": 51.19,
+      "percentile_5y": 70.64,
       "signal": "中立",
       "explanation": "黄金/铜比位于过去3年中性区间",
       "note": "绝对值受期货报价单位影响，综合判断只使用历史百分位。"
