@@ -56,7 +56,27 @@ jobs:
         run: python -m json.tool output/latest_data.json > /dev/null
 
       - name: Generate four cards and 16-second Short
-        run: python generate_daily_short.py --input output/latest_data.json --output-dir output/media
+        run: |
+          mkdir -p output
+          set +e
+          python generate_daily_short.py --input output/latest_data.json --output-dir output/media > output/daily_short.log 2>&1
+          code=$?
+          cat output/daily_short.log
+          echo "$code" > output/daily_short_exit_code.txt
+          exit "$code"
+
+      - name: Save render log
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/daily_short.log output/daily_short_exit_code.txt
+          if git diff --cached --quiet; then
+            echo "No log change."
+          else
+            git commit -m "Record daily Short render result"
+            git push origin HEAD:main
+          fi
 
       - name: Validate generated media and audio
         run: |
