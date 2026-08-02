@@ -1,0 +1,31 @@
+name: Temporary Whisper Bundle
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Build whisper.cpp
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build whisper.cpp/build --config Release -j 2
+      - name: Download multilingual base model
+        run: |
+          bash whisper.cpp/models/download-ggml-model.sh base
+          mkdir -p bundle
+          cp whisper.cpp/build/bin/whisper-cli bundle/
+          cp whisper.cpp/models/ggml-base.bin bundle/
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-base-linux-bundle
+          path: bundle/*
+          retention-days: 1
