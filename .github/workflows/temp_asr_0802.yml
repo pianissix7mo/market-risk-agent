@@ -1,0 +1,49 @@
+name: Temporary ASR 0802
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/temp_asr_0802.yml'
+      - 'tmp_asr/**'
+
+permissions:
+  contents: read
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Rebuild audio
+        run: |
+          cat tmp_asr/part_*.txt | base64 --decode > /tmp/0802.ogg
+          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/0802.ogg
+      - name: Install Whisper
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --upgrade pip
+          pip install openai-whisper
+      - name: Transcribe actual speech
+        run: |
+          mkdir -p /tmp/asr
+          whisper /tmp/0802.ogg \
+            --model small \
+            --language Chinese \
+            --task transcribe \
+            --temperature 0 \
+            --word_timestamps True \
+            --initial_prompt '美股风险温度表，VIX，VXN，AAII，Equity Put Call，Fear and Greed，黄金铜比，十年期美债收益率，纳指100 Forward PE，CME FedWatch，CFTC，NAAIM，SPX，Polymarket，偏买，中立，偏卖。' \
+            --output_format all \
+            --output_dir /tmp/asr
+      - name: Upload transcription
+        uses: actions/upload-artifact@v4
+        with:
+          name: actual-speech-transcript-0802
+          path: /tmp/asr/*
+          retention-days: 1
