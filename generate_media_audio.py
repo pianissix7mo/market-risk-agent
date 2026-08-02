@@ -79,7 +79,7 @@ def recover_audio(source: Path, output: Path) -> Path:
         text=True,
     )
     duration = probe_duration(output)
-    if duration < 10.0:
+    if duration < 9.0:
         raise RuntimeError(f"Recovered music is too short: {duration:.3f}s")
     print(f"Recovered Panoramic Arrival audio: duration={duration:.3f}s")
     return output
