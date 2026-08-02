@@ -1,33 +1,29 @@
 from __future__ import annotations
 
-import argparse
-import json
 import math
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-WIDTH, HEIGHT, FPS = 1080, 1920, 30
+WIDTH, HEIGHT = 1080, 1920
 CX = WIDTH // 2
-LEFT, RIGHT = 96, 954
+LEFT, RIGHT = 92, 988
 
 C = {
-    "bg": "#06101C",
-    "bg2": "#091828",
-    "card": "#0C1B2B",
-    "card_alt": "#091723",
-    "border": "#29425D",
-    "border2": "#1A3047",
-    "text": "#F6F9FC",
-    "muted": "#AAB7C7",
-    "dim": "#74869A",
-    "blue": "#58A6FF",
-    "green": "#3DDC97",
-    "yellow": "#F3C95B",
+    "bg": "#07131F",
+    "bg2": "#0C2136",
+    "card": "#0F2032",
+    "card_alt": "#10263C",
+    "line": "#274564",
+    "text": "#F4F8FC",
+    "muted": "#A9B9CA",
+    "dim": "#7E90A5",
+    "blue": "#63B3FF",
+    "green": "#37D39A",
+    "yellow": "#F5C85C",
     "red": "#FF6B72",
+    "white": "#FFFFFF",
 }
 
 FONT_REGULAR = [
@@ -65,24 +61,6 @@ def rgb(value: str) -> tuple[int, int, int]:
     return tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))
 
 
-def blend(a: str, b: str, t: float) -> tuple[int, int, int]:
-    aa, bb = rgb(a), rgb(b)
-    return tuple(int(x + (y - x) * t) for x, y in zip(aa, bb))
-
-
-def fit(draw: ImageDraw.ImageDraw, text: str, width: int, start: int, minimum: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    for size in range(start, minimum - 1, -2):
-        f = font(size, bold)
-        box = draw.textbbox((0, 0), text, font=f, anchor="lt")
-        if box[2] - box[0] <= width:
-            return f
-    return font(minimum, bold)
-
-
-def fitted(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, width: int, start: int, minimum: int, fill: str, bold: bool = False, anchor: str = "lt") -> None:
-    draw.text(xy, text, font=fit(draw, text, width, start, minimum, bold), fill=fill, anchor=anchor)
-
-
 def number(value: Any, digits: int = 2, suffix: str = "") -> str:
     try:
         return f"{float(value):.{digits}f}{suffix}"
@@ -98,321 +76,854 @@ def rank(value: Any) -> str:
 
 
 def signal_color(signal: str) -> str:
-    return {"偏买": C["green"], "中立": C["yellow"], "偏卖": C["red"]}.get(signal, C["muted"])
+    return {
+        "偏买": C["green"],
+        "中立": C["yellow"],
+        "偏卖": C["red"],
+    }.get(signal, C["muted"])
 
 
-def text_shadow(image: Image.Image, xy: tuple[int, int], text: str, f: ImageFont.FreeTypeFont, fill: str, anchor: str = "mm") -> None:
-    draw = ImageDraw.Draw(image)
-    draw.text((xy[0], xy[1] + 7), text, font=f, fill="#02070C", anchor=anchor)
-    draw.text(xy, text, font=f, fill=fill, anchor=anchor)
+def text_size(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    text_font: ImageFont.FreeTypeFont,
+) -> tuple[int, int]:
+    box = draw.textbbox((0, 0), text, font=text_font)
+    return box[2] - box[0], box[3] - box[1]
 
 
-def glow_text(image: Image.Image, xy: tuple[int, int], text: str, f: ImageFont.FreeTypeFont, fill: str) -> None:
-    layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    ld = ImageDraw.Draw(layer)
-    ld.text(xy, text, font=f, fill=(*rgb(fill), 72), anchor="mm")
-    image.alpha_composite(layer.filter(ImageFilter.GaussianBlur(14)))
-    ImageDraw.Draw(image).text(xy, text, font=f, fill=fill, anchor="mm")
+def wrap_text_to_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    text_font: ImageFont.FreeTypeFont,
+    max_width: int,
+) -> list[str]:
+    """Pixel-based wrapping that works for mixed Chinese and English text."""
+    if not text:
+        return [""]
+
+    lines: list[str] = []
+    current = ""
+
+    for character in text:
+        if character == "\n":
+            lines.append(current)
+            current = ""
+            continue
+
+        candidate = current + character
+        if not current or text_size(draw, candidate, text_font)[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = character
+
+    if current or not lines:
+        lines.append(current)
+    return lines
+
+
+def fit_text_in_box(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    box: tuple[int, int, int, int],
+    start_size: int,
+    min_size: int,
+    *,
+    bold: bool = False,
+    line_gap: int = 8,
+    max_lines: int | None = None,
+) -> tuple[ImageFont.FreeTypeFont, list[str], int, int]:
+    """Wrap and shrink text until both width and height fit the target box."""
+    x0, y0, x1, y1 = box
+    max_width = x1 - x0
+    max_height = y1 - y0
+
+    for size in range(start_size, min_size - 1, -2):
+        text_font = font(size, bold)
+        lines = wrap_text_to_width(draw, text, text_font, max_width)
+
+        if max_lines is not None and len(lines) > max_lines:
+            continue
+
+        line_height = text_size(draw, "中Ag", text_font)[1]
+        total_height = len(lines) * line_height + max(0, len(lines) - 1) * line_gap
+
+        widest = max((text_size(draw, line, text_font)[0] for line in lines), default=0)
+        if widest <= max_width and total_height <= max_height:
+            return text_font, lines, line_height, total_height
+
+    raise ValueError(
+        f"Text does not fit box {box} even at minimum size {min_size}: {text!r}"
+    )
+
+
+def draw_text_in_box(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    text: str,
+    *,
+    fill: str = C["text"],
+    start_size: int = 32,
+    min_size: int = 18,
+    bold: bool = False,
+    align: str = "left",
+    valign: str = "top",
+    line_gap: int = 8,
+    max_lines: int | None = None,
+) -> tuple[int, int, int, int]:
+    """Draw text inside a fixed box and return its actual bounding box."""
+    x0, y0, x1, y1 = box
+    text_font, lines, line_height, total_height = fit_text_in_box(
+        draw,
+        text,
+        box,
+        start_size,
+        min_size,
+        bold=bold,
+        line_gap=line_gap,
+        max_lines=max_lines,
+    )
+
+    if valign == "top":
+        y = y0
+    elif valign == "middle":
+        y = y0 + ((y1 - y0) - total_height) // 2
+    elif valign == "bottom":
+        y = y1 - total_height
+    else:
+        raise ValueError(f"Unsupported valign: {valign}")
+
+    actual_left = x1
+    actual_top = y
+    actual_right = x0
+    actual_bottom = y
+
+    for line in lines:
+        line_width, _ = text_size(draw, line, text_font)
+
+        if align == "left":
+            x = x0
+        elif align == "center":
+            x = x0 + ((x1 - x0) - line_width) // 2
+        elif align == "right":
+            x = x1 - line_width
+        else:
+            raise ValueError(f"Unsupported align: {align}")
+
+        draw.text((x, y), line, font=text_font, fill=fill)
+        actual_left = min(actual_left, x)
+        actual_right = max(actual_right, x + line_width)
+        actual_bottom = y + line_height
+        y += line_height + line_gap
+
+    actual = (actual_left, actual_top, actual_right, actual_bottom)
+    assert_box_inside(actual, box, f"text: {text}")
+    return actual
+
+
+def assert_box_inside(
+    inner: tuple[int, int, int, int],
+    outer: tuple[int, int, int, int],
+    label: str,
+) -> None:
+    if not (
+        inner[0] >= outer[0]
+        and inner[1] >= outer[1]
+        and inner[2] <= outer[2]
+        and inner[3] <= outer[3]
+    ):
+        raise AssertionError(f"{label} left its box: inner={inner}, outer={outer}")
 
 
 def background() -> Image.Image:
     image = Image.new("RGBA", (WIDTH, HEIGHT), C["bg"])
     draw = ImageDraw.Draw(image)
+
+    start = rgb(C["bg"])
+    end = rgb(C["bg2"])
     for y in range(HEIGHT):
         t = y / (HEIGHT - 1)
-        color = blend(C["bg"], "#08203A", t / 0.55) if t < 0.55 else blend("#08203A", C["bg2"], (t - 0.55) / 0.45)
+        color = tuple(int(start[i] * (1 - t) + end[i] * t) for i in range(3))
         draw.line((0, y, WIDTH, y), fill=color)
 
-    light = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    ld = ImageDraw.Draw(light)
-    ld.ellipse((-220, -120, 620, 700), fill=(40, 132, 224, 58))
-    ld.ellipse((640, 980, 1300, 1940), fill=(21, 98, 184, 44))
-    ld.ellipse((220, 1180, 920, 2060), fill=(7, 72, 145, 30))
-    image.alpha_composite(light.filter(ImageFilter.GaussianBlur(120)))
+    glow = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    glow_draw = ImageDraw.Draw(glow)
+    glow_draw.ellipse((-200, -100, 500, 600), fill=(70, 140, 220, 50))
+    glow_draw.ellipse((650, 1100, 1250, 1800), fill=(30, 90, 180, 45))
+    image.alpha_composite(glow.filter(ImageFilter.GaussianBlur(120)))
 
     draw = ImageDraw.Draw(image)
     for x in range(0, WIDTH, 90):
-        draw.line((x, 0, x, HEIGHT), fill=(32, 73, 112, 28))
+        draw.line((x, 0, x, HEIGHT), fill=(40, 80, 120, 25))
     for y in range(0, HEIGHT, 100):
-        draw.line((0, y, WIDTH, y), fill=(32, 73, 112, 24))
+        draw.line((0, y, WIDTH, y), fill=(40, 80, 120, 20))
 
-    chart = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    cd = ImageDraw.Draw(chart)
-    for start, stop, step, base, opacity in [(560, 1040, 32, 420, 65), (60, 520, 34, 1470, 50)]:
-        points: list[tuple[int, int]] = []
-        for i, x in enumerate(range(start, stop, step)):
-            wave = math.sin(i * (0.55 if start > 500 else 0.52))
-            y = base + int((40 if start > 500 else 36) * wave) - i * (2 if start > 500 else 4)
-            points.append((x, y))
-            color = (76, 209, 159, opacity) if i % 4 != 2 else (255, 107, 114, opacity)
-            cd.line((x, y - 38, x, y + 30), fill=color, width=2)
-            cd.rectangle((x - 7, y - 16, x + 7, y + 16), fill=color)
-        cd.line(points, fill=(80, 175, 255, opacity + 10), width=4)
-    image.alpha_composite(chart.filter(ImageFilter.GaussianBlur(1)))
-
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, 10, HEIGHT), fill="#1B4B78")
-    draw.rectangle((10, 0, 14, HEIGHT), fill="#0A2239")
-    draw.line((40, 34, 174, 34), fill="#2E6594", width=2)
-    draw.line((40, 34, 40, 96), fill="#2E6594", width=2)
-    draw.line((906, 1880, 1040, 1880), fill="#2E6594", width=2)
-    draw.line((1040, 1818, 1040, 1880), fill="#2E6594", width=2)
     return image
 
 
-def card(image: Image.Image, box: tuple[int, int, int, int], signal: str | None = None, fill: str | None = None) -> None:
-    x0, y0, x1, y1 = box
-    shadow = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle((x0 + 8, y0 + 14, x1 + 8, y1 + 14), radius=34, fill=(0, 0, 0, 150))
-    image.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(20)))
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle(box, radius=34, fill=fill or C["card"], outline=C["border"], width=2)
-    draw.rounded_rectangle((x0 + 2, y0 + 2, x1 - 2, y1 - 2), radius=32, outline=C["border2"], width=1)
-    draw.line((x0 + 30, y0 + 26, x1 - 30, y0 + 26), fill="#17334D", width=2)
-    draw.polygon([(x1 - 98, y0), (x1, y0), (x1, y0 + 98)], fill="#102B43")
-    if signal:
-        color = signal_color(signal)
-        draw.rounded_rectangle((x0, y0 + 34, x0 + 10, y1 - 34), radius=5, fill=color)
-        draw.line((x0 + 30, y0 + 26, x0 + 190, y0 + 26), fill=color, width=3)
+def rounded_card(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    *,
+    fill: str = C["card"],
+    outline: str = C["line"],
+    width: int = 2,
+    radius: int = 28,
+    shadow: bool = True,
+) -> None:
+    if shadow:
+        shadow_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow_layer)
+        x0, y0, x1, y1 = box
+        shadow_draw.rounded_rectangle(
+            (x0 + 6, y0 + 10, x1 + 6, y1 + 10),
+            radius=radius,
+            fill=(0, 0, 0, 110),
+        )
+        image.alpha_composite(shadow_layer.filter(ImageFilter.GaussianBlur(18)))
+
+    ImageDraw.Draw(image).rounded_rectangle(
+        box,
+        radius=radius,
+        fill=fill,
+        outline=outline,
+        width=width,
+    )
 
 
 def header(image: Image.Image, market_date: str, category: str) -> None:
     draw = ImageDraw.Draw(image)
-    draw.text((CX, 58), "MARKET RISK MONITOR", font=font(22, True), fill=C["blue"], anchor="ma")
-    draw.text((CX, 96), "每日美股风险温度", font=font(52, True), fill=C["text"], anchor="ma")
+    draw.text(
+        (CX, 60),
+        "MARKET RISK MONITOR",
+        font=font(22, True),
+        fill=C["blue"],
+        anchor="ma",
+    )
+    draw.text(
+        (CX, 100),
+        "每日美股风险温度",
+        font=font(52, True),
+        fill=C["text"],
+        anchor="ma",
+    )
 
-    draw.rounded_rectangle((380, 176, 700, 242), radius=20, fill="#10263B", outline=C["border"], width=2)
-    draw.text((CX, 209), market_date, font=font(38, True), fill=C["text"], anchor="mm")
+    rounded_card(
+        image,
+        (370, 176, 710, 244),
+        fill="#10263B",
+        radius=18,
+        shadow=False,
+    )
+    draw.text(
+        (CX, 210),
+        market_date,
+        font=font(38, True),
+        fill=C["text"],
+        anchor="mm",
+    )
 
-    draw.rounded_rectangle((430, 258, 650, 322), radius=20, fill="#0E2438", outline=C["border"], width=2)
-    draw.text((CX, 290), category, font=font(24, True), fill=C["text"], anchor="mm")
-    draw.line((164, 350, 964, 350), fill=C["border"], width=2)
-    draw.line((409, 350, 719, 350), fill=C["blue"], width=4)
+    rounded_card(
+        image,
+        (430, 258, 650, 318),
+        fill="#0E2236",
+        radius=18,
+        shadow=False,
+    )
+    draw_text_in_box(
+        draw,
+        (445, 272, 635, 306),
+        category,
+        start_size=24,
+        min_size=20,
+        bold=True,
+        align="center",
+        valign="middle",
+        max_lines=1,
+    )
+
+    draw.line((150, 350, 930, 350), fill=C["line"], width=2)
+    draw.line((420, 350, 660, 350), fill=C["blue"], width=4)
 
 
-def footer(image: Image.Image, source: str) -> None:
+def footer(image: Image.Image) -> None:
     draw = ImageDraw.Draw(image)
-    draw.line((LEFT, 1700, RIGHT, 1700), fill=C["border"], width=2)
-    fitted(draw, (LEFT, 1732), f"数据来源：{source}", RIGHT - LEFT, 24, 19, C["dim"])
-    draw.text((LEFT, 1818), "仅供参考，不构成任何投资建议", font=font(27), fill=C["muted"], anchor="lt")
+    draw.line((LEFT, 1770, RIGHT, 1770), fill=C["line"], width=2)
+    draw.text(
+        (LEFT, 1810),
+        "仅供参考，不构成投资建议",
+        font=font(26),
+        fill=C["muted"],
+    )
 
 
-def signal_pill(draw: ImageDraw.ImageDraw, signal: str, center_x: int, y: int) -> None:
+def signal_pill(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    signal: str,
+) -> None:
     color = signal_color(signal)
-    x = center_x - 82
-    draw.rounded_rectangle((x, y, x + 164, y + 64), radius=20, fill="#091521", outline=color, width=3)
-    draw.rounded_rectangle((x + 10, y + 10, x + 18, y + 54), radius=4, fill=color)
-    draw.text((x + 95, y + 32), signal, font=font(33, True), fill=color, anchor="mm")
-
-
-def percentile_bar(image: Image.Image, center_x: int, y: int, percentile: Any, color: str) -> None:
+    rounded_card(
+        image,
+        box,
+        fill="#091521",
+        outline=color,
+        width=3,
+        radius=18,
+        shadow=False,
+    )
     draw = ImageDraw.Draw(image)
-    x, width = center_x - 260, 520
-    draw.rounded_rectangle((x, y, x + width, y + 12), radius=6, fill="#07121E")
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle(
+        (x0 + 10, y0 + 10, x0 + 18, y1 - 10),
+        radius=4,
+        fill=color,
+    )
+    draw_text_in_box(
+        draw,
+        (x0 + 28, y0 + 8, x1 - 8, y1 - 8),
+        signal,
+        fill=color,
+        start_size=28,
+        min_size=24,
+        bold=True,
+        align="center",
+        valign="middle",
+        max_lines=1,
+    )
+
+
+def percentile_bar(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    percentile: Any,
+    color: str,
+) -> None:
+    draw = ImageDraw.Draw(image)
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle(box, radius=6, fill="#08121C")
+
     try:
-        p = max(0.0, min(100.0, float(percentile)))
+        value = max(0.0, min(100.0, float(percentile)))
     except (TypeError, ValueError):
-        p = 0.0
-    px = x + int(width * p / 100)
-    draw.rounded_rectangle((x, y, max(x + 10, px), y + 12), radius=6, fill=color)
-    draw.ellipse((px - 9, y - 3, px + 9, y + 15), fill=C["text"], outline=color, width=4)
+        value = 0.0
+
+    progress_x = x0 + int((x1 - x0) * value / 100)
+    draw.rounded_rectangle(
+        (x0, y0, max(x0 + 10, progress_x), y1),
+        radius=6,
+        fill=color,
+    )
+    center_y = (y0 + y1) // 2
+    draw.ellipse(
+        (progress_x - 9, center_y - 9, progress_x + 9, center_y + 9),
+        fill=C["white"],
+        outline=color,
+        width=3,
+    )
 
 
 def volatility_signal(percentile: Any) -> tuple[str, str]:
     try:
-        p = float(percentile)
+        value = float(percentile)
     except (TypeError, ValueError):
         return "中立", "缺少过去3年分位数据"
-    if p >= 75:
-        return "偏买", "波动压力较高，反向信号偏买"
-    if p <= 25:
-        return "偏卖", "市场波动较低，反向信号偏卖"
-    return "中立", "处于过去3年中性区间"
+
+    if value >= 75:
+        return "偏买", "波动处于高位，反向信号偏买。"
+    if value <= 25:
+        return "偏卖", "波动处于低位，反向信号偏卖。"
+    return "中立", "处于过去3年中性区间。"
 
 
-def metric_card(image: Image.Image, box: tuple[int, int, int, int], title: str, subtitle: str, value: str, signal: str, percentile: Any, explanation: str, value_size: int = 132) -> None:
-    card(image, box, signal)
+def indicator_card(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    *,
+    title: str,
+    subtitle: str,
+    value: str,
+    signal: str,
+    percentile: Any,
+    note: str,
+) -> None:
+    rounded_card(image, box)
     draw = ImageDraw.Draw(image)
     x0, y0, x1, y1 = box
-    cx = (x0 + x1) // 2
     color = signal_color(signal)
-    draw.text((cx, y0 + 46), "RISK INDICATOR", font=font(19, True), fill=color, anchor="mm")
-    fitted(draw, (cx, y0 + 88), title, 650, 46, 34, C["text"], True, "mm")
-    fitted(draw, (cx, y0 + 132), subtitle, 650, 27, 22, C["muted"], anchor="mm")
-    value_font = fit(draw, value, 560, value_size, 92, True)
-    text_shadow(image, (cx, y0 + 238), value, value_font, C["text"])
-    signal_pill(draw, signal, cx, y0 + 320)
-    draw.text((cx, y0 + 414), f"3年分位  {rank(percentile)}", font=font(30, True), fill=C["blue"], anchor="mm")
-    percentile_bar(image, cx, y0 + 444, percentile, color)
-    fitted(draw, (cx, y0 + 492), explanation, 760, 27, 22, C["muted"], anchor="mm")
-    assert y0 + 512 <= y1
+
+    draw_text_in_box(
+        draw,
+        (x0 + 36, y0 + 28, x1 - 36, y0 + 54),
+        "RISK INDICATOR",
+        fill=color,
+        start_size=18,
+        min_size=16,
+        bold=True,
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (x0 + 36, y0 + 64, x1 - 36, y0 + 116),
+        title,
+        start_size=44,
+        min_size=34,
+        bold=True,
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (x0 + 36, y0 + 118, x1 - 36, y0 + 152),
+        subtitle,
+        fill=C["muted"],
+        start_size=24,
+        min_size=20,
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (x0 + 36, y0 + 170, x1 - 36, y0 + 288),
+        value,
+        start_size=112,
+        min_size=72,
+        bold=True,
+        align="center",
+        valign="middle",
+        max_lines=1,
+    )
+
+    signal_pill(image, (x0 + 36, y0 + 286, x0 + 180, y0 + 342), signal)
+
+    draw_text_in_box(
+        draw,
+        (x0 + 36, y0 + 368, x1 - 36, y0 + 404),
+        f"3年分位  {rank(percentile)}",
+        fill=C["blue"],
+        start_size=28,
+        min_size=24,
+        bold=True,
+        max_lines=1,
+    )
+    percentile_bar(
+        image,
+        (x0 + 36, y0 + 414, x1 - 36, y0 + 426),
+        percentile,
+        color,
+    )
+    draw_text_in_box(
+        draw,
+        (x0 + 36, y0 + 446, x1 - 36, y1 - 30),
+        note,
+        fill=C["muted"],
+        start_size=24,
+        min_size=19,
+        line_gap=6,
+        max_lines=2,
+    )
 
 
-def sentiment_card(image: Image.Image, box: tuple[int, int, int, int], title: str, value: str, signal: str, explanation: str, descriptor: str | None = None, secondary: str | None = None) -> None:
-    card(image, box, signal)
+def sentiment_card(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    *,
+    title: str,
+    value: str,
+    signal: str,
+    note: str,
+    extra: str | None = None,
+) -> None:
+    rounded_card(image, box)
     draw = ImageDraw.Draw(image)
     x0, y0, x1, y1 = box
-    cx = (x0 + x1) // 2
-    color = signal_color(signal)
-    draw.text((cx, y0 + 40), "SENTIMENT", font=font(18, True), fill=color, anchor="mm")
-    fitted(draw, (cx, y0 + 82), title, 650, 40, 30, C["text"], True, "mm")
 
-    if descriptor:
-        draw.rounded_rectangle((cx - 66, y0 + 112, cx + 66, y0 + 158), radius=15, fill="#0A1A28", outline=C["border"], width=2)
-        fitted(draw, (cx, y0 + 135), descriptor, 110, 25, 20, C["muted"], True, "mm")
-        number_y, pill_y, explanation_y = y0 + 212, y0 + 262, y0 + 338
-    else:
-        number_y, pill_y, explanation_y = y0 + 168, y0 + 220, y0 + 304
+    draw_text_in_box(
+        draw,
+        (x0 + 32, y0 + 28, x1 - 210, y0 + 70),
+        title,
+        start_size=34,
+        min_size=26,
+        bold=True,
+        max_lines=1,
+    )
+    signal_pill(image, (x1 - 180, y0 + 24, x1 - 32, y0 + 80), signal)
 
-    text_shadow(image, (cx, number_y), value, fit(draw, value, 430, 86, 66, True), C["text"])
-    signal_pill(draw, signal, cx, pill_y)
-    if secondary:
-        fitted(draw, (cx, y0 + 344), secondary, 760, 29, 22, C["blue"], True, "mm")
-        explanation_y = y0 + 410
-    fitted(draw, (cx, explanation_y), explanation, 760, 26, 21, C["muted"], anchor="mm")
-    assert explanation_y + 32 <= y1
+    draw_text_in_box(
+        draw,
+        (x0 + 32, y0 + 96, x1 - 32, y0 + 170),
+        value,
+        start_size=72,
+        min_size=56,
+        bold=True,
+        max_lines=1,
+    )
+
+    note_top = y0 + 192
+    if extra:
+        draw_text_in_box(
+            draw,
+            (x0 + 32, y0 + 174, x1 - 32, y0 + 214),
+            extra,
+            fill=C["blue"],
+            start_size=26,
+            min_size=21,
+            max_lines=1,
+        )
+        note_top = y0 + 228
+
+    draw_text_in_box(
+        draw,
+        (x0 + 32, note_top, x1 - 32, y1 - 28),
+        note,
+        fill=C["muted"],
+        start_size=24,
+        min_size=19,
+        line_gap=6,
+        max_lines=3,
+    )
+
+
+def qqq_signal(value: Any) -> str:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return "中立"
+    return "偏买" if numeric <= 22 else "偏卖" if numeric >= 30 else "中立"
 
 
 def render_volatility(data: dict[str, Any], output: Path) -> None:
     image = background()
-    header(image, data["market_date"], "波动率")
-    vix, vxn = data["volatility"]["vix"], data["volatility"]["vxn"]
+    header(image, str(data["market_date"]), "波动率")
+
+    vix = data["volatility"]["vix"]
+    vxn = data["volatility"]["vxn"]
+
     vix_signal, vix_note = volatility_signal(vix.get("percentile_3y"))
     vxn_signal, vxn_note = volatility_signal(vxn.get("percentile_3y"))
-    metric_card(image, (LEFT, 390, RIGHT, 912), "VIX", "标普500波动率", number(vix.get("value")), vix_signal, vix.get("percentile_3y"), vix_note)
-    metric_card(image, (LEFT, 956, RIGHT, 1478), "VXN", "纳斯达克100波动率", number(vxn.get("value")), vxn_signal, vxn.get("percentile_3y"), vxn_note)
-    footer(image, "Yahoo Finance")
+
+    indicator_card(
+        image,
+        (LEFT, 398, RIGHT, 912),
+        title="VIX",
+        subtitle="标普500波动率",
+        value=number(vix.get("value")),
+        signal=vix_signal,
+        percentile=vix.get("percentile_3y"),
+        note=vix_note,
+    )
+    indicator_card(
+        image,
+        (LEFT, 958, RIGHT, 1472),
+        title="VXN",
+        subtitle="纳斯达克100波动率",
+        value=number(vxn.get("value")),
+        signal=vxn_signal,
+        percentile=vxn.get("percentile_3y"),
+        note=vxn_note,
+    )
+
+    footer(image)
+    output.parent.mkdir(parents=True, exist_ok=True)
     image.convert("RGB").save(output, quality=95)
 
 
 def render_sentiment(data: dict[str, Any], output: Path) -> None:
     image = background()
-    header(image, data["market_date"], "市场情绪")
+    header(image, str(data["market_date"]), "市场情绪")
+
     macro = data["macro"]
-    pc, fg, aaii = macro["equity_put_call"], macro["fear_greed"], macro["aaii_sentiment"]
-    sentiment_card(image, (LEFT, 390, RIGHT, 735), "Equity Put/Call", number(pc.get("value")), pc.get("signal", "中立"), "市场保护情绪处于中性区间" if pc.get("signal") == "中立" else pc.get("explanation", ""))
-    sentiment_card(image, (LEFT, 770, RIGHT, 1155), "CNN Fear & Greed", number(fg.get("value")), fg.get("signal", "中立"), "尚未进入极度恐惧或极度贪婪" if fg.get("signal") == "中立" else fg.get("explanation", ""), descriptor=str(fg.get("rating", "")).replace("fear", "恐惧").replace("greed", "贪婪"))
-    sentiment_card(image, (LEFT, 1190, RIGHT, 1650), "AAII Bull-Bear Spread", number(aaii.get("bull_bear_spread"), 1), aaii.get("signal", "中立"), "悲观情绪明显较高，反向信号偏买" if aaii.get("signal") == "偏买" else aaii.get("explanation", ""), secondary=f"Bearish {number(aaii.get('bearish'), 1, '%')}  >  Bullish {number(aaii.get('bullish'), 1, '%')}")
-    footer(image, "Cboe / CNN / AAII")
+    put_call = macro["equity_put_call"]
+    fear_greed = macro["fear_greed"]
+    aaii = macro["aaii_sentiment"]
+
+    sentiment_card(
+        image,
+        (LEFT, 392, RIGHT, 732),
+        title="Equity Put/Call",
+        value=number(put_call.get("value")),
+        signal=put_call.get("signal", "中立"),
+        note=put_call.get("explanation", "Put/Call处于中性区间。"),
+    )
+
+    rating = str(fear_greed.get("rating", "")).strip()
+    sentiment_card(
+        image,
+        (LEFT, 770, RIGHT, 1110),
+        title="CNN Fear & Greed",
+        value=number(fear_greed.get("value")),
+        signal=fear_greed.get("signal", "中立"),
+        extra=f"评级：{rating.title()}" if rating else None,
+        note=fear_greed.get("explanation", "恐惧贪婪指数处于中性区间。"),
+    )
+
+    sentiment_card(
+        image,
+        (LEFT, 1148, RIGHT, 1608),
+        title="AAII Bull-Bear Spread",
+        value=number(aaii.get("bull_bear_spread"), 1),
+        signal=aaii.get("signal", "中立"),
+        extra=(
+            f"Bearish {number(aaii.get('bearish'), 1, '%')}  >  "
+            f"Bullish {number(aaii.get('bullish'), 1, '%')}"
+        ),
+        note=aaii.get(
+            "explanation",
+            "悲观情绪明显高于乐观情绪，反向信号偏买。",
+        ),
+    )
+
+    footer(image)
+    output.parent.mkdir(parents=True, exist_ok=True)
     image.convert("RGB").save(output, quality=95)
 
 
 def render_macro(data: dict[str, Any], output: Path) -> None:
     image = background()
-    header(image, data["market_date"], "宏观压力")
-    gc, ty = data["macro"]["gold_copper_ratio"], data["macro"]["treasury_10y"]
-    metric_card(image, (LEFT, 390, RIGHT, 912), "Gold / Copper Ratio", "黄金/铜比", number(gc.get("value")), gc.get("signal", "中立"), gc.get("percentile_3y"), "判断主要使用历史分位", 120)
-    metric_card(image, (LEFT, 956, RIGHT, 1478), "10Y Treasury Yield", "10年美债收益率", number(ty.get("value"), 3, "%"), ty.get("signal", "中立"), ty.get("percentile_3y"), "收益率处于高位，对估值形成压力" if ty.get("signal") == "偏卖" else ty.get("explanation", ""), 120)
-    footer(image, "Yahoo Finance")
+    header(image, str(data["market_date"]), "宏观压力")
+
+    gold_copper = data["macro"]["gold_copper_ratio"]
+    treasury = data["macro"]["treasury_10y"]
+
+    indicator_card(
+        image,
+        (LEFT, 398, RIGHT, 912),
+        title="Gold / Copper Ratio",
+        subtitle="黄金 / 铜比",
+        value=number(gold_copper.get("value")),
+        signal=gold_copper.get("signal", "中立"),
+        percentile=gold_copper.get("percentile_3y"),
+        note=gold_copper.get(
+            "explanation",
+            "位于过去3年中性区间，暂无明显宏观压力信号。",
+        ),
+    )
+    indicator_card(
+        image,
+        (LEFT, 958, RIGHT, 1472),
+        title="10Y Treasury Yield",
+        subtitle="10年美债收益率",
+        value=number(treasury.get("value"), 3, "%"),
+        signal=treasury.get("signal", "中立"),
+        percentile=treasury.get("percentile_3y"),
+        note=treasury.get(
+            "explanation",
+            "收益率位于高位，对科技股估值偏不利。",
+        ),
+    )
+
+    footer(image)
+    output.parent.mkdir(parents=True, exist_ok=True)
     image.convert("RGB").save(output, quality=95)
-
-
-def qqq_signal(value: Any) -> str:
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return "中立"
-    return "偏买" if value <= 22 else "偏卖" if value >= 30 else "中立"
 
 
 def render_summary(data: dict[str, Any], output: Path) -> None:
     image = background()
-    header(image, data["market_date"], "估值与判断")
+    header(image, str(data["market_date"]), "估值与判断")
     draw = ImageDraw.Draw(image)
+
     overall = data["overall_signal"]
     result = overall.get("result", "中立")
+    score = int(overall.get("score", 0))
     result_color = signal_color(result)
+
     qqq = data["valuation"]["nasdaq100"]
-    value_signal = qqq_signal(qqq.get("forward_pe"))
+    trailing_pe = number(qqq.get("trailing_pe"), 2, "x")
+    forward_pe = number(qqq.get("forward_pe"), 2, "x")
+    valuation_signal = qqq_signal(qqq.get("forward_pe"))
 
-    fitted(draw, (CX, 412), f"为什么今天是{result}？", 760, 52, 40, C["text"], True, "mm")
-    card(image, (LEFT, 460, RIGHT, 895), result)
-    draw = ImageDraw.Draw(image)
-    draw.text((CX, 508), "TODAY'S SIGNAL", font=font(20, True), fill=result_color, anchor="mm")
-    draw.text((CX, 552), "综合判断", font=font(31), fill=C["muted"], anchor="mm")
-    glow_text(image, (CX, 680), result, fit(draw, result, 460, 160, 128, True), result_color)
-    draw = ImageDraw.Draw(image)
-    draw.text((CX, 830), f"综合分数 {int(overall.get('score', 0)):+d}", font=font(27, True), fill=C["muted"], anchor="mm")
+    details = overall.get("details", [])
+    buy_reasons = [
+        str(item.get("reason", "")).strip()
+        for item in details
+        if item.get("signal") == "偏买" and item.get("reason")
+    ]
+    sell_reasons = [
+        str(item.get("reason", "")).strip()
+        for item in details
+        if item.get("signal") == "偏卖" and item.get("reason")
+    ]
 
-    card(image, (LEFT, 935, RIGHT, 1335), value_signal)
-    draw = ImageDraw.Draw(image)
-    draw.text((CX, 980), "QQQ VALUATION", font=font(20, True), fill=C["blue"], anchor="mm")
-    draw.text((CX, 1022), "QQQ 估值", font=font(35, True), fill=C["text"], anchor="mm")
-    left_box, right_box = (136, 1080, 516, 1278), (534, 1080, 914, 1278)
-    draw.rounded_rectangle(left_box, radius=26, fill="#071523", outline=C["border2"], width=2)
-    draw.rounded_rectangle(right_box, radius=26, fill="#071523", outline=C["border2"], width=2)
-    lcx, rcx = 326, 724
-    draw.text((lcx, 1114), "QQQ PE", font=font(27), fill=C["muted"], anchor="mm")
-    text_shadow(image, (lcx, 1180), number(qqq.get("trailing_pe"), 2, "x"), font(64, True), C["text"])
-    draw = ImageDraw.Draw(image)
-    draw.text((lcx, 1252), "当前估值", font=font(23), fill=C["dim"], anchor="mm")
-    draw.text((rcx, 1114), "QQQ Forward PE", font=font(25), fill=C["muted"], anchor="mm")
-    text_shadow(image, (rcx, 1180), number(qqq.get("forward_pe"), 2, "x"), font(64, True), C["text"])
-    draw = ImageDraw.Draw(image)
-    draw.text((rcx, 1252), value_signal, font=font(25, True), fill=signal_color(value_signal), anchor="mm")
+    reason_parts = buy_reasons[:2]
+    if sell_reasons:
+        reason_parts.append(f"但{sell_reasons[0]}")
+    summary_reason = "；".join(reason_parts) or "综合指标暂时没有形成明显方向。"
 
-    card(image, (LEFT, 1375, RIGHT, 1655), fill=C["card_alt"])
-    draw = ImageDraw.Draw(image)
-    fitted(draw, (CX, 1450), f"为什么今天是{result}？", 720, 48, 38, C["text"], True, "mm")
-    fitted(draw, (CX, 1532), "判断逻辑详情请看我的解释视频", 760, 40, 31, C["blue"], True, "mm")
-    draw.text((CX, 1596), "VIX · 情绪 · 宏观 · QQQ估值", font=font(23), fill=C["dim"], anchor="mm")
-    footer(image, "Yahoo Finance / Cboe / CNN / AAII / ETF PE History")
+    signal_box = (LEFT, 392, RIGHT, 900)
+    rounded_card(image, signal_box)
+
+    draw_text_in_box(
+        draw,
+        (LEFT + 36, 426, RIGHT - 36, 458),
+        "TODAY'S SIGNAL",
+        fill=result_color,
+        start_size=20,
+        min_size=18,
+        bold=True,
+        align="center",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (LEFT + 36, 470, RIGHT - 36, 514),
+        "综合判断",
+        fill=C["muted"],
+        start_size=30,
+        min_size=26,
+        align="center",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (LEFT + 36, 530, RIGHT - 36, 668),
+        result,
+        fill=result_color,
+        start_size=150,
+        min_size=110,
+        bold=True,
+        align="center",
+        valign="middle",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (LEFT + 36, 680, RIGHT - 36, 720),
+        f"综合分数 {score:+d}",
+        fill=C["muted"],
+        start_size=28,
+        min_size=24,
+        bold=True,
+        align="center",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (LEFT + 42, 748, RIGHT - 42, 862),
+        summary_reason,
+        fill=C["muted"],
+        start_size=25,
+        min_size=19,
+        align="center",
+        line_gap=6,
+        max_lines=3,
+    )
+
+    valuation_box = (LEFT, 950, RIGHT, 1328)
+    rounded_card(image, valuation_box)
+    draw_text_in_box(
+        draw,
+        (LEFT + 36, 978, RIGHT - 36, 1024),
+        "QQQ 估值",
+        start_size=34,
+        min_size=28,
+        bold=True,
+        align="center",
+        max_lines=1,
+    )
+
+    left_box = (132, 1060, 500, 1260)
+    right_box = (580, 1060, 948, 1260)
+    for box in (left_box, right_box):
+        rounded_card(image, box, fill="#081623", shadow=False)
+
+    draw_text_in_box(
+        draw,
+        (150, 1084, 482, 1126),
+        "QQQ PE",
+        fill=C["muted"],
+        start_size=28,
+        min_size=24,
+        align="center",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (150, 1140, 482, 1212),
+        trailing_pe,
+        start_size=66,
+        min_size=52,
+        bold=True,
+        align="center",
+        valign="middle",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (150, 1220, 482, 1252),
+        "当前估值",
+        fill=C["dim"],
+        start_size=24,
+        min_size=20,
+        align="center",
+        max_lines=1,
+    )
+
+    draw_text_in_box(
+        draw,
+        (598, 1084, 930, 1126),
+        "QQQ Forward PE",
+        fill=C["muted"],
+        start_size=26,
+        min_size=21,
+        align="center",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (598, 1140, 930, 1212),
+        forward_pe,
+        start_size=66,
+        min_size=52,
+        bold=True,
+        align="center",
+        valign="middle",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (598, 1220, 930, 1252),
+        valuation_signal,
+        fill=signal_color(valuation_signal),
+        start_size=24,
+        min_size=20,
+        bold=True,
+        align="center",
+        max_lines=1,
+    )
+
+    reason_box = (LEFT, 1368, RIGHT, 1648)
+    rounded_card(image, reason_box, fill=C["card_alt"])
+    draw_text_in_box(
+        draw,
+        (LEFT + 36, 1406, RIGHT - 36, 1460),
+        f"为什么今天是{result}？",
+        start_size=42,
+        min_size=32,
+        bold=True,
+        align="center",
+        max_lines=1,
+    )
+    draw_text_in_box(
+        draw,
+        (LEFT + 48, 1490, RIGHT - 48, 1586),
+        summary_reason,
+        fill=C["blue"],
+        start_size=30,
+        min_size=22,
+        align="center",
+        line_gap=6,
+        max_lines=3,
+    )
+    draw_text_in_box(
+        draw,
+        (LEFT + 36, 1600, RIGHT - 36, 1632),
+        "VIX · 情绪 · 宏观 · QQQ估值",
+        fill=C["dim"],
+        start_size=22,
+        min_size=18,
+        align="center",
+        max_lines=1,
+    )
+
+    footer(image)
+    output.parent.mkdir(parents=True, exist_ok=True)
     image.convert("RGB").save(output, quality=95)
-
-
-def build_video(cards: list[Path], output: Path) -> None:
-    hold, transition = 111, 2
-    total = hold * 4 + transition * 3
-    assert total == FPS * 15
-    with tempfile.TemporaryDirectory() as temp_name:
-        temp = Path(temp_name)
-        sequence: list[tuple[Path, int]] = []
-        for i, card_path in enumerate(cards):
-            sequence.append((card_path, hold))
-            if i < len(cards) - 1:
-                with Image.open(card_path).convert("RGB") as first, Image.open(cards[i + 1]).convert("RGB") as second:
-                    transition_path = temp / f"transition_{i}.png"
-                    Image.blend(first, second, 0.5).save(transition_path)
-                sequence.append((transition_path, transition))
-
-        segments: list[Path] = []
-        for i, (still, frames) in enumerate(sequence):
-            segment = temp / f"segment_{i:02d}.mp4"
-            subprocess.run([
-                "ffmpeg", "-y", "-loop", "1", "-framerate", str(FPS), "-i", str(still),
-                "-frames:v", str(frames), "-an", "-r", str(FPS), "-c:v", "libx264",
-                "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-g", str(FPS),
-                "-keyint_min", str(FPS), "-sc_threshold", "0", str(segment),
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            segments.append(segment)
-
-        concat = temp / "segments.txt"
-        concat.write_text("\n".join(f"file '{segment.as_posix()}'" for segment in segments), encoding="utf-8")
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
-            "-frames:v", str(total), "-an", "-r", str(FPS), "-c:v", "libx264",
-            "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output),
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="output/latest_data.json")
-    parser.add_argument("--output-dir", default="output/media")
-    args = parser.parse_args()
-    data = json.loads(Path(args.input).read_text(encoding="utf-8"))
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    cards = [output_dir / "01_volatility.png", output_dir / "02_sentiment.png", output_dir / "03_macro.png", output_dir / "04_summary.png"]
-    render_volatility(data, cards[0])
-    render_sentiment(data, cards[1])
-    render_macro(data, cards[2])
-    render_summary(data, cards[3])
-    video = output_dir / "market_risk_short.mp4"
-    build_video(cards, video)
-    print(json.dumps({"cards": [str(path) for path in cards], "video": str(video)}, ensure_ascii=False, indent=2))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
