@@ -20,7 +20,7 @@ jobs:
       - name: Download and quantize multilingual small model
         run: |
           bash whisper.cpp/models/download-ggml-model.sh small
-          whisper.cpp/build/bin/quantize whisper.cpp/models/ggml-small.bin whisper.cpp/models/ggml-small-q5_0.bin q5_0
+          whisper.cpp/build/bin/whisper-quantize whisper.cpp/models/ggml-small.bin whisper.cpp/models/ggml-small-q5_0.bin q5_0
           mkdir -p bundle
           cp whisper.cpp/models/ggml-small-q5_0.bin bundle/
       - name: Upload model
