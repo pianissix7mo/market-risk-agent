@@ -21,26 +21,6 @@ def decode_part(part: Path) -> bytes:
     return base64.b64decode(encoded, validate=True)
 
 
-def print_part_diagnostics(parts: list[Path]) -> None:
-    print("AUDIO_PART_DIAGNOSTICS_BEGIN")
-    raw_join = ""
-    for index, part in enumerate(parts):
-        encoded = clean_base64(part)
-        raw_join += encoded
-        decoded = decode_part(part)
-        print(
-            f"part={index:02d} encoded_chars={len(encoded)} mod4={len(encoded) % 4} "
-            f"first16={encoded[:16]} last16={encoded[-16:]} "
-            f"decoded_bytes={len(decoded)} decoded_first8={decoded[:8].hex()} "
-            f"decoded_last8={decoded[-8:].hex()} oggs_count={decoded.count(b'OggS')}"
-        )
-    print(
-        f"raw_join_chars={len(raw_join)} raw_join_mod4={len(raw_join) % 4} "
-        f"raw_join_first16={raw_join[:16]} raw_join_last16={raw_join[-16:]}"
-    )
-    print("AUDIO_PART_DIAGNOSTICS_END")
-
-
 def reconstruct_audio(output: Path) -> Path:
     parts = sorted(Path().glob(AUDIO_PARTS_GLOB))
     expected_names = [f"panoramic_arrival_15s.ogg.b64.part{i:02d}" for i in range(5)]
@@ -51,28 +31,14 @@ def reconstruct_audio(output: Path) -> Path:
             f"found: {actual_names}"
         )
 
-    print_part_diagnostics(parts)
     audio_bytes = b"".join(decode_part(part) for part in parts)
     if len(audio_bytes) < 10_000:
         raise RuntimeError(f"Decoded audio is unexpectedly small: {len(audio_bytes)} bytes")
-
     output.write_bytes(audio_bytes)
+    return output
 
-    codec = subprocess.check_output(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=codec_name",
-            "-of",
-            "default=nw=1:nk=1",
-            str(output),
-        ],
-        text=True,
-    ).strip()
+
+def probe_duration(path: Path) -> float:
     duration_text = subprocess.check_output(
         [
             "ffprobe",
@@ -82,17 +48,40 @@ def reconstruct_audio(output: Path) -> Path:
             "format=duration",
             "-of",
             "default=nw=1:nk=1",
-            str(output),
+            str(path),
         ],
         text=True,
     ).strip()
-    duration = float(duration_text)
-    if not codec:
-        raise RuntimeError("Decoded music asset has no audio stream")
-    if not 14.0 <= duration <= 16.0:
-        raise RuntimeError(f"Decoded music duration is invalid: {duration:.3f}s")
+    return float(duration_text)
 
-    print(f"Validated music asset: codec={codec}, duration={duration:.3f}s, bytes={len(audio_bytes)}")
+
+def recover_audio(source: Path, output: Path) -> Path:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-err_detect",
+            "ignore_err",
+            "-i",
+            str(source),
+            "-vn",
+            "-c:a",
+            "pcm_s16le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            str(output),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    duration = probe_duration(output)
+    if duration < 10.0:
+        raise RuntimeError(f"Recovered music is too short: {duration:.3f}s")
+    print(f"Recovered Panoramic Arrival audio: duration={duration:.3f}s")
     return output
 
 
@@ -100,7 +89,8 @@ def build_video_with_music(cards: list[Path], output: Path) -> None:
     with tempfile.TemporaryDirectory() as temp_name:
         temp = Path(temp_name)
         silent_video = temp / "market_risk_short_silent.mp4"
-        audio_file = reconstruct_audio(temp / "panoramic_arrival_15s.ogg")
+        damaged_audio = reconstruct_audio(temp / "panoramic_arrival_parts.ogg")
+        recovered_audio = recover_audio(damaged_audio, temp / "panoramic_arrival_recovered.wav")
 
         original_build_video(cards, silent_video)
 
@@ -110,22 +100,24 @@ def build_video_with_music(cards: list[Path], output: Path) -> None:
                 "-y",
                 "-i",
                 str(silent_video),
-                "-stream_loop",
-                "-1",
                 "-i",
-                str(audio_file),
+                str(recovered_audio),
+                "-i",
+                str(recovered_audio),
+                "-filter_complex",
+                "[1:a][2:a]acrossfade=d=0.5:c1=tri:c2=tri,"
+                "atrim=0:15,volume=0.20,"
+                "afade=t=in:st=0:d=0.35,afade=t=out:st=14.20:d=0.80[a]",
                 "-map",
                 "0:v:0",
                 "-map",
-                "1:a:0",
+                "[a]",
                 "-c:v",
                 "copy",
                 "-c:a",
                 "aac",
                 "-b:a",
                 "192k",
-                "-af",
-                "volume=0.20,afade=t=in:st=0:d=0.35,afade=t=out:st=14.20:d=0.80",
                 "-t",
                 str(TARGET_DURATION_SECONDS),
                 "-movflags",
@@ -134,7 +126,8 @@ def build_video_with_music(cards: list[Path], output: Path) -> None:
             ],
             check=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
 
