@@ -1,0 +1,49 @@
+name: Diagnose Gold Copper Percentile
+
+on:
+  pull_request:
+    paths:
+      - daily_risk.py
+      - generate_media.py
+      - .github/workflows/diagnose-gold-copper.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out requested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Inspect Gold Copper history
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from daily_risk import close_series
+
+          gold = close_series("GC=F").rename("gold")
+          copper = close_series("HG=F").rename("copper")
+          df = pd.concat([gold, copper], axis=1).dropna()
+          df["ratio"] = df["gold"] / df["copper"]
+          end = df.index.max()
+          one = df[df.index >= end - pd.DateOffset(years=1)].copy()
+          latest = float(one["ratio"].iloc[-1])
+          rank = float((one["ratio"] <= latest).mean() * 100)
+          print("LATEST", one.index[-1], one.iloc[-1].to_dict())
+          print("OBS", len(one), "RANK", rank)
+          print("RATIO_QUANTILES", one["ratio"].quantile([0, .01, .05, .1, .25, .5, .75, .9, .95, .99, 1]).to_dict())
+          print("LOWEST_15")
+          print(one.nsmallest(15, "ratio")[["gold", "copper", "ratio"]].to_string())
+          print("LATEST_30")
+          print(one.tail(30)[["gold", "copper", "ratio"]].to_string())
+          PY
