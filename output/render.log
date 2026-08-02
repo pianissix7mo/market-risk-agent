@@ -1,12 +1,12 @@
-Traceback (most recent call last):
-  File "/home/runner/work/market-risk-agent/market-risk-agent/generate_media_audio.py", line 97, in <module>
-    raise SystemExit(generate_media.main())
-                     ^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/market-risk-agent/market-risk-agent/generate_media.py", line 412, in main
-    build_video(cards, video)
-  File "/home/runner/work/market-risk-agent/market-risk-agent/generate_media_audio.py", line 54, in build_video_with_music
-    audio_file = reconstruct_audio(temp / "panoramic_arrival_15s.ogg")
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/market-risk-agent/market-risk-agent/generate_media_audio.py", line 29, in reconstruct_audio
-    raise RuntimeError(f"Decoded audio is unexpectedly small: {len(audio_bytes)} bytes")
-RuntimeError: Decoded audio is unexpectedly small: 62713 bytes
+[ogg @ 0x5573e25e2740] CRC mismatch!
+codec_name=opus
+duration=1.000000
+{
+  "cards": [
+    "output/media/01_volatility.png",
+    "output/media/02_sentiment.png",
+    "output/media/03_macro.png",
+    "output/media/04_summary.png"
+  ],
+  "video": "output/media/market_risk_short.mp4"
+}
