@@ -1,0 +1,11 @@
+{
+  "title": "Market Risk Monitor 2026-07-31",
+  "duration_seconds": 16,
+  "cards": [
+    "output/media/01_volatility.png",
+    "output/media/02_sentiment.png",
+    "output/media/03_macro.png",
+    "output/media/04_summary.png"
+  ],
+  "video": "output/media/Market Risk Monitor 2026-07-31.mp4"
+}
