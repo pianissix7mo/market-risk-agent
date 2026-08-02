@@ -21,7 +21,9 @@ def reconstruct_audio(output: Path) -> Path:
             f"found: {actual_names}"
         )
 
-    encoded = "".join(part.read_text(encoding="utf-8").strip() for part in parts)
+    encoded = "".join(part.read_text(encoding="utf-8") for part in parts)
+    encoded = "".join(encoded.split())
+    encoded += "=" * (-len(encoded) % 4)
     audio_bytes = base64.b64decode(encoded, validate=True)
     if len(audio_bytes) < 100_000:
         raise RuntimeError(f"Decoded audio is unexpectedly small: {len(audio_bytes)} bytes")
