@@ -1,12 +1,10 @@
-Traceback (most recent call last):
-  File "/home/runner/work/market-risk-agent/market-risk-agent/generate_media_audio.py", line 139, in <module>
-    raise SystemExit(generate_media.main())
-                     ^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/market-risk-agent/market-risk-agent/generate_media.py", line 412, in main
-    build_video(cards, video)
-  File "/home/runner/work/market-risk-agent/market-risk-agent/generate_media_audio.py", line 93, in build_video_with_music
-    recovered_audio = recover_audio(damaged_audio, temp / "panoramic_arrival_recovered.wav")
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/market-risk-agent/market-risk-agent/generate_media_audio.py", line 83, in recover_audio
-    raise RuntimeError(f"Recovered music is too short: {duration:.3f}s")
-RuntimeError: Recovered music is too short: 9.993s
+Recovered Panoramic Arrival audio: duration=9.993s
+{
+  "cards": [
+    "output/media/01_volatility.png",
+    "output/media/02_sentiment.png",
+    "output/media/03_macro.png",
+    "output/media/04_summary.png"
+  ],
+  "video": "output/media/market_risk_short.mp4"
+}
