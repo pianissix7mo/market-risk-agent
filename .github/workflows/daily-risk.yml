@@ -8,13 +8,11 @@ on:
     paths:
       - daily_risk.py
       - generate_media.py
-      - generate_media_audio.py
-      - assets/audio/**
+      - generate_daily_short.py
       - requirements.txt
       - .github/workflows/daily-risk.yml
   schedule:
     # 22:15 UTC = 18:15 Toronto during daylight time / 17:15 during standard time.
-    # This is safely after the regular US market close year-round.
     - cron: "15 22 * * 1-5"
 
 permissions:
@@ -57,29 +55,8 @@ jobs:
       - name: Validate JSON
         run: python -m json.tool output/latest_data.json > /dev/null
 
-      - name: Generate four cards and 15-second Short with music
-        id: render
-        run: |
-          mkdir -p output
-          set +e
-          python generate_media_audio.py --input output/latest_data.json --output-dir output/media > output/render.log 2>&1
-          render_code=$?
-          echo "$render_code" > output/render_exit_code.txt
-          cat output/render.log
-          exit "$render_code"
-
-      - name: Commit render diagnostics
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add output/render.log output/render_exit_code.txt
-          if git diff --cached --quiet; then
-            echo "No render diagnostics change to commit."
-          else
-            git commit -m "Record media render diagnostics"
-            git push origin HEAD:main
-          fi
+      - name: Generate four cards and 16-second Short
+        run: python generate_daily_short.py --input output/latest_data.json --output-dir output/media
 
       - name: Validate generated media and audio
         run: |
@@ -92,22 +69,37 @@ jobs:
           for card in cards:
               with Image.open(card) as image:
                   assert image.size == (1080, 1920), f"Unexpected size for {card}: {image.size}"
-          video = Path("output/media/market_risk_short.mp4")
-          assert video.exists() and video.stat().st_size > 100_000, "Short video missing or too small"
-          print("Validated four 1080x1920 cards and the Short video.")
+
+          videos = list(Path("output/media").glob("Market Risk Monitor *.mp4"))
+          assert len(videos) == 1, f"Expected one dated Short, got {videos}"
+          assert videos[0].stat().st_size > 100_000, "Short video missing or too small"
+          print(f"Validated four cards and {videos[0].name}")
           PY
 
-          duration=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 output/media/market_risk_short.mp4)
-          audio_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 output/media/market_risk_short.mp4)
+          video=$(find output/media -maxdepth 1 -name 'Market Risk Monitor *.mp4' -print -quit)
+          duration=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$video")
+          audio_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$video")
           python - "$duration" "$audio_codec" <<'PY'
           import sys
 
           duration = float(sys.argv[1])
           audio_codec = sys.argv[2].strip()
-          assert 14.5 <= duration <= 15.5, f"Unexpected video duration: {duration}"
+          assert 15.8 <= duration <= 16.2, f"Unexpected video duration: {duration}"
           assert audio_codec, "Generated Short does not contain an audio stream"
           print(f"Video duration: {duration:.2f}s; audio codec: {audio_codec}")
           PY
+
+      - name: Save fixed music and latest JSON to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/latest_data.json assets/audio/a_night_alone_16s.mp3
+          if git diff --cached --quiet; then
+            echo "No data or music change to commit."
+          else
+            git commit -m "Save fixed Short music and latest data"
+            git push origin HEAD:main
+          fi
 
       - name: Upload JSON, cards and Short artifact
         uses: actions/upload-artifact@v4
@@ -116,21 +108,9 @@ jobs:
           path: |
             output/latest_data.json
             output/media/*.png
-            output/media/market_risk_short.mp4
+            output/media/*.mp4
           if-no-files-found: error
           retention-days: 30
-
-      - name: Commit updated JSON to main
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add output/latest_data.json
-          if git diff --cached --quiet; then
-            echo "No JSON change to commit."
-          else
-            git commit -m "Update daily market risk data"
-            git push origin HEAD:main
-          fi
 
       - name: Publish only the latest media to latest-media branch
         run: |
@@ -153,9 +133,9 @@ jobs:
           - `media/02_sentiment.png`
           - `media/03_macro.png`
           - `media/04_summary.png`
-          - `media/market_risk_short.mp4`
+          - `media/Market Risk Monitor YYYY-MM-DD.mp4`
           EOF
 
           git add README.md latest_data.json media
-          git commit -m "Publish latest market risk media with music"
+          git commit -m "Publish latest 16-second Market Risk Monitor"
           git push --force origin HEAD:latest-media
