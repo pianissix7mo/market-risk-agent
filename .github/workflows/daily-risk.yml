@@ -2,6 +2,14 @@ name: Daily Market Risk
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - daily_risk.py
+      - generate_media.py
+      - generate_daily_short.py
+      - assets/audio/a_night_alone_16s.mp3
+      - requirements.txt
+      - .github/workflows/daily-risk.yml
   push:
     branches:
       - main
@@ -20,7 +28,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: daily-market-risk
+  group: daily-market-risk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,10 +37,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Check out main
+      - name: Check out requested revision
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'main' }}
           fetch-depth: 0
 
       - name: Set up Python
@@ -50,11 +58,32 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Generate latest market-risk JSON
-        if: github.event_name != 'push'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: python daily_risk.py
 
       - name: Validate JSON
-        run: python -m json.tool output/latest_data.json > /dev/null
+        run: |
+          python -m json.tool output/latest_data.json > /dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("output/latest_data.json").read_text(encoding="utf-8"))
+          percentile_metrics = {
+              "VIX": data["volatility"]["vix"],
+              "VXN": data["volatility"]["vxn"],
+              "Gold / Copper Ratio": data["macro"]["gold_copper_ratio"],
+              "10Y Treasury Yield": data["macro"]["treasury_10y"],
+          }
+          for name, metric in percentile_metrics.items():
+              present = [
+                  key for key in ("percentile_1y", "percentile_3y", "percentile_5y")
+                  if key in metric
+              ]
+              if present and len(present) != 3:
+                  raise AssertionError(f"{name} has incomplete percentile fields: {present}")
+          print("Validated JSON and percentile field consistency.")
+          PY
 
       - name: Confirm fixed music exists
         run: |
@@ -67,11 +96,12 @@ jobs:
           import sys
           duration = float(sys.argv[1])
           assert 15.8 <= duration <= 16.2, duration
-          print(f"Fixed music duration: {duration:.2f}s")
+          print(f"Fixed music duration: {duration:.3f}s")
           PY
 
       - name: Generate four cards and 16-second Short
         run: |
+          rm -rf output/media
           mkdir -p output/media
           python generate_daily_short.py \
             --input output/latest_data.json \
@@ -83,24 +113,19 @@ jobs:
           from pathlib import Path
           from PIL import Image
 
-          cards = sorted(Path("output/media").glob("*.png"))
-          assert len(cards) == 4, f"Expected 4 cards, got {len(cards)}"
-
-          expected = {
+          expected = [
               "01_volatility.png",
               "02_sentiment.png",
               "03_macro.png",
               "04_summary.png",
-          }
-          assert {card.name for card in cards} == expected
-
+          ]
+          cards = sorted(Path("output/media").glob("*.png"))
+          assert [card.name for card in cards] == expected, cards
           for card in cards:
               with Image.open(card) as image:
-                  assert image.size == (1080, 1920), (
-                      f"Unexpected size for {card}: {image.size}"
-                  )
-
-          print("Validated four 1080x1920 cards.")
+                  assert image.size == (1080, 1920), (card, image.size)
+                  assert image.mode == "RGB", (card, image.mode)
+          print("Validated four 1080x1920 RGB cards.")
           PY
 
       - name: Validate final mobile-compatible MP4
@@ -108,68 +133,44 @@ jobs:
           video=$(find output/media -maxdepth 1 \
             -name 'Market Risk Monitor *.mp4' \
             -print -quit)
-
           test -n "$video"
           test -s "$video"
 
-          duration=$(ffprobe -v error \
-            -show_entries format=duration \
-            -of default=nw=1:nk=1 "$video")
-
-          width=$(ffprobe -v error -select_streams v:0 \
-            -show_entries stream=width \
-            -of default=nw=1:nk=1 "$video")
-
-          height=$(ffprobe -v error -select_streams v:0 \
-            -show_entries stream=height \
-            -of default=nw=1:nk=1 "$video")
-
-          video_codec=$(ffprobe -v error -select_streams v:0 \
-            -show_entries stream=codec_name \
-            -of default=nw=1:nk=1 "$video")
-
-          profile=$(ffprobe -v error -select_streams v:0 \
-            -show_entries stream=profile \
-            -of default=nw=1:nk=1 "$video")
-
-          pix_fmt=$(ffprobe -v error -select_streams v:0 \
-            -show_entries stream=pix_fmt \
-            -of default=nw=1:nk=1 "$video")
-
-          audio_codec=$(ffprobe -v error -select_streams a:0 \
-            -show_entries stream=codec_name \
-            -of default=nw=1:nk=1 "$video")
-
-          python - \
-            "$duration" \
-            "$width" \
-            "$height" \
-            "$video_codec" \
-            "$profile" \
-            "$pix_fmt" \
-            "$audio_codec" <<'PY'
+          python - "$video" <<'PY'
+          import json
+          import subprocess
           import sys
+          from pathlib import Path
 
-          duration = float(sys.argv[1])
-          width = int(sys.argv[2])
-          height = int(sys.argv[3])
-          video_codec = sys.argv[4].strip().lower()
-          profile = sys.argv[5].strip().lower()
-          pix_fmt = sys.argv[6].strip().lower()
-          audio_codec = sys.argv[7].strip().lower()
+          path = Path(sys.argv[1])
+          probe = json.loads(subprocess.check_output([
+              "ffprobe", "-v", "error", "-show_streams", "-show_format",
+              "-of", "json", str(path),
+          ], text=True))
+          video = [s for s in probe["streams"] if s.get("codec_type") == "video"]
+          audio = [s for s in probe["streams"] if s.get("codec_type") == "audio"]
+          assert len(video) == 1, video
+          assert len(audio) == 1, audio
+          video = video[0]
+          audio = audio[0]
+          duration = float(probe["format"]["duration"])
+          profile = str(video.get("profile", "")).lower()
 
           assert 15.8 <= duration <= 16.2, duration
-          assert width == 1080, width
-          assert height == 1920, height
-          assert video_codec == "h264", video_codec
+          assert int(video["width"]) == 1080, video["width"]
+          assert int(video["height"]) == 1920, video["height"]
+          assert video["codec_name"].lower() == "h264", video["codec_name"]
           assert profile in {"baseline", "constrained baseline"}, profile
-          assert pix_fmt == "yuv420p", pix_fmt
-          assert audio_codec == "aac", audio_codec
+          assert video["pix_fmt"].lower() == "yuv420p", video["pix_fmt"]
+          assert audio["codec_name"].lower() == "aac", audio["codec_name"]
 
+          payload = path.read_bytes()
+          moov = payload.find(b"moov")
+          mdat = payload.find(b"mdat")
+          assert 0 <= moov < mdat, (moov, mdat)
           print(
-              f"Validated MP4: {width}x{height}, "
-              f"{duration:.2f}s, {video_codec}/{profile}, "
-              f"{pix_fmt}, audio={audio_codec}"
+              f"Validated MP4: 1080x1920, {duration:.3f}s, "
+              f"h264/{profile}, yuv420p, AAC, faststart"
           )
           PY
 
@@ -185,14 +186,12 @@ jobs:
           retention-days: 30
 
       - name: Commit updated JSON to main
-        if: github.event_name != 'push'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add output/latest_data.json
-
           if git diff --cached --quiet; then
             echo "No JSON change to commit."
           else
@@ -201,6 +200,7 @@ jobs:
           fi
 
       - name: Publish only the latest media to latest-media branch
+        if: github.event_name != 'pull_request'
         run: |
           media_tmp=$(mktemp -d)
           cp output/latest_data.json "$media_tmp/latest_data.json"
@@ -214,7 +214,7 @@ jobs:
           cat > README.md <<'EOF'
           # Latest Market Risk Media
 
-          This branch is automatically replaced on every successful run.
+          This branch is automatically replaced on every successful weekday run.
 
           Files:
 
