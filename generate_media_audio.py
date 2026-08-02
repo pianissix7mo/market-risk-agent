@@ -11,6 +11,12 @@ AUDIO_PARTS_GLOB = "assets/audio/panoramic_arrival_15s.ogg.b64.part*"
 TARGET_DURATION_SECONDS = 15
 
 
+def decode_part(part: Path) -> bytes:
+    encoded = "".join(part.read_text(encoding="utf-8").split())
+    encoded += "=" * (-len(encoded) % 4)
+    return base64.b64decode(encoded, validate=True)
+
+
 def reconstruct_audio(output: Path) -> Path:
     parts = sorted(Path().glob(AUDIO_PARTS_GLOB))
     expected_names = [f"panoramic_arrival_15s.ogg.b64.part{i:02d}" for i in range(5)]
@@ -21,15 +27,13 @@ def reconstruct_audio(output: Path) -> Path:
             f"found: {actual_names}"
         )
 
-    encoded = "".join(part.read_text(encoding="utf-8") for part in parts)
-    encoded = "".join(encoded.split())
-    encoded += "=" * (-len(encoded) % 4)
-    audio_bytes = base64.b64decode(encoded, validate=True)
+    audio_bytes = b"".join(decode_part(part) for part in parts)
     if len(audio_bytes) < 10_000:
         raise RuntimeError(f"Decoded audio is unexpectedly small: {len(audio_bytes)} bytes")
 
     output.write_bytes(audio_bytes)
-    subprocess.run(
+
+    codec = subprocess.check_output(
         [
             "ffprobe",
             "-v",
@@ -37,13 +41,33 @@ def reconstruct_audio(output: Path) -> Path:
             "-select_streams",
             "a:0",
             "-show_entries",
-            "stream=codec_name,duration",
+            "stream=codec_name",
             "-of",
-            "default=nw=1",
+            "default=nw=1:nk=1",
             str(output),
         ],
-        check=True,
-    )
+        text=True,
+    ).strip()
+    duration_text = subprocess.check_output(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            str(output),
+        ],
+        text=True,
+    ).strip()
+    duration = float(duration_text)
+    if not codec:
+        raise RuntimeError("Decoded music asset has no audio stream")
+    if not 14.0 <= duration <= 16.0:
+        raise RuntimeError(f"Decoded music duration is invalid: {duration:.3f}s")
+
+    print(f"Validated music asset: codec={codec}, duration={duration:.3f}s, bytes={len(audio_bytes)}")
     return output
 
 
