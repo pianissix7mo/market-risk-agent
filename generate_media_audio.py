@@ -11,10 +11,34 @@ AUDIO_PARTS_GLOB = "assets/audio/panoramic_arrival_15s.ogg.b64.part*"
 TARGET_DURATION_SECONDS = 15
 
 
+def clean_base64(part: Path) -> str:
+    return "".join(part.read_text(encoding="utf-8").split())
+
+
 def decode_part(part: Path) -> bytes:
-    encoded = "".join(part.read_text(encoding="utf-8").split())
+    encoded = clean_base64(part)
     encoded += "=" * (-len(encoded) % 4)
     return base64.b64decode(encoded, validate=True)
+
+
+def print_part_diagnostics(parts: list[Path]) -> None:
+    print("AUDIO_PART_DIAGNOSTICS_BEGIN")
+    raw_join = ""
+    for index, part in enumerate(parts):
+        encoded = clean_base64(part)
+        raw_join += encoded
+        decoded = decode_part(part)
+        print(
+            f"part={index:02d} encoded_chars={len(encoded)} mod4={len(encoded) % 4} "
+            f"first16={encoded[:16]} last16={encoded[-16:]} "
+            f"decoded_bytes={len(decoded)} decoded_first8={decoded[:8].hex()} "
+            f"decoded_last8={decoded[-8:].hex()} oggs_count={decoded.count(b'OggS')}"
+        )
+    print(
+        f"raw_join_chars={len(raw_join)} raw_join_mod4={len(raw_join) % 4} "
+        f"raw_join_first16={raw_join[:16]} raw_join_last16={raw_join[-16:]}"
+    )
+    print("AUDIO_PART_DIAGNOSTICS_END")
 
 
 def reconstruct_audio(output: Path) -> Path:
@@ -27,6 +51,7 @@ def reconstruct_audio(output: Path) -> Path:
             f"found: {actual_names}"
         )
 
+    print_part_diagnostics(parts)
     audio_bytes = b"".join(decode_part(part) for part in parts)
     if len(audio_bytes) < 10_000:
         raise RuntimeError(f"Decoded audio is unexpectedly small: {len(audio_bytes)} bytes")
