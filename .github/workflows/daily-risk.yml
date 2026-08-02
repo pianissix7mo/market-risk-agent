@@ -164,7 +164,7 @@ jobs:
             output/media/*.png
             output/media/*.mp4
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
       - name: Publish latest media to latest-media branch
         run: |
