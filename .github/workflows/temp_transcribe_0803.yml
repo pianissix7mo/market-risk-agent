@@ -1,0 +1,66 @@
+name: temp-transcribe-0803
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'temp_transcribe_0803/**'
+      - '.github/workflows/temp_transcribe_0803.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild audio
+        run: |
+          cat temp_transcribe_0803/audio_part_* > /tmp/audio.b64
+          base64 -d /tmp/audio.b64 > /tmp/audio.opus
+          ffprobe -v error -show_entries format=duration -of default=nw=1 /tmp/audio.opus
+      - name: Install transcription tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install faster-whisper
+      - name: Transcribe actual speech
+        run: |
+          cat > /tmp/transcribe.py <<'PY'
+          import json
+          from faster_whisper import WhisperModel
+
+          model = WhisperModel('small', device='cpu', compute_type='int8')
+          segments, info = model.transcribe(
+              '/tmp/audio.opus',
+              language='zh',
+              beam_size=5,
+              best_of=5,
+              temperature=0.0,
+              vad_filter=True,
+              vad_parameters=dict(min_silence_duration_ms=350),
+              word_timestamps=True,
+              condition_on_previous_text=True,
+          )
+          out=[]
+          for s in segments:
+              words=[]
+              for w in (s.words or []):
+                  words.append({'start': float(w.start), 'end': float(w.end), 'word': w.word})
+              out.append({'start': float(s.start), 'end': float(s.end), 'text': s.text.strip(), 'words': words})
+          with open('temp_transcribe_0803/transcript.json','w',encoding='utf-8') as f:
+              json.dump({'engine':'faster-whisper-small','language':info.language,'segments':out},f,ensure_ascii=False,indent=2)
+          with open('temp_transcribe_0803/transcript.txt','w',encoding='utf-8') as f:
+              for s in out:
+                  f.write(f"[{s['start']:.2f}-{s['end']:.2f}] {s['text']}\n")
+          PY
+          python /tmp/transcribe.py
+      - name: Upload transcript
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-0803
+          path: |
+            temp_transcribe_0803/transcript.json
+            temp_transcribe_0803/transcript.txt
+          retention-days: 1
