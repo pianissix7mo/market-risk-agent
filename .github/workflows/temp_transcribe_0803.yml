@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Rebuild audio
         run: |
-          cat temp_transcribe_0803/audio_part_* > /tmp/audio.b64
+          find temp_transcribe_0803 -maxdepth 1 -type f -name 'audio_part_*' ! -name 'audio_part_08' -print0 | sort -z | xargs -0 cat > /tmp/audio.b64
           base64 -d /tmp/audio.b64 > /tmp/audio.opus
           ffprobe -v error -show_entries format=duration -of default=nw=1 /tmp/audio.opus
       - name: Install transcription tools
