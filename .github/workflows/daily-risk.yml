@@ -172,6 +172,7 @@ jobs:
           cp output/latest_data.json "$media_tmp/latest_data.json"
           cp -R output/media "$media_tmp/media"
 
+          git reset --hard HEAD
           git clean -fdx
           git switch --orphan latest-media
           git rm -rf . || true
