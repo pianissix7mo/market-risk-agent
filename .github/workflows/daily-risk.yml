@@ -172,10 +172,12 @@ jobs:
           cp output/latest_data.json "$media_tmp/latest_data.json"
           cp -R output/media "$media_tmp/media"
 
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git reset --hard HEAD
           git clean -fdx
           git switch --orphan latest-media
-          git rm -rf . || true
+          git rm -rf --ignore-unmatch .
           cp -R "$media_tmp"/* .
 
           cat > README.md <<'EOF'
