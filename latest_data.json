@@ -1,0 +1,156 @@
+{
+  "market_date": "2026-08-07",
+  "generated_at": "2026-08-08T02:50:51+00:00",
+  "volatility": {
+    "vix": {
+      "label": "VIX",
+      "market": "标普500",
+      "source_symbol": "^VIX",
+      "value": 14.9,
+      "percentile_1y": 8.7,
+      "percentile_3y": 28.34,
+      "percentile_5y": 20.06,
+      "date": "2026-08-07",
+      "source": "Yahoo Finance"
+    },
+    "vxn": {
+      "label": "VXN",
+      "market": "纳斯达克100",
+      "source_symbol": "^VXN",
+      "value": 22.82,
+      "percentile_1y": 45.63,
+      "percentile_3y": 68.57,
+      "percentile_5y": 52.51,
+      "date": "2026-08-07",
+      "source": "Yahoo Finance"
+    }
+  },
+  "macro": {
+    "equity_put_call": {
+      "value": 0.54,
+      "date": "2026-08-07",
+      "source": "Cboe",
+      "signal": "偏卖",
+      "explanation": "Put/Call偏低，情绪偏乐观，反向信号偏卖"
+    },
+    "fear_greed": {
+      "value": 63.69,
+      "rating": "greed",
+      "date": "2026-08-07",
+      "source": "CNN Fear & Greed",
+      "signal": "中立",
+      "explanation": "恐惧贪婪指数处于中性区间"
+    },
+    "aaii_sentiment": {
+      "bullish": 29.6,
+      "neutral": 28.1,
+      "bearish": 42.3,
+      "bull_bear_spread": -12.7,
+      "date": "2026-07-25",
+      "frequency": "weekly",
+      "source": "AAII Sentiment Survey",
+      "source_url": "https://insights.aaii.com/p/aaii-sentiment-survey-optimism-plunges",
+      "signal": "偏买",
+      "explanation": "AAII悲观情绪明显高于乐观情绪，反向信号偏买"
+    },
+    "gold_copper_ratio": {
+      "value": 668.3827,
+      "date": "2026-08-07",
+      "source": "Yahoo Finance GC=F / HG=F",
+      "percentile_1y": 13.49,
+      "percentile_3y": 62.96,
+      "percentile_5y": 77.72,
+      "signal": "中立",
+      "explanation": "黄金/铜比位于过去3年中性区间",
+      "note": "绝对值受期货报价单位影响，综合判断只使用历史百分位。"
+    },
+    "treasury_10y": {
+      "value": 4.66,
+      "unit": "percent",
+      "date": "2026-08-07",
+      "source": "Yahoo Finance ^TNX",
+      "percentile_1y": 97.22,
+      "percentile_3y": 95.09,
+      "percentile_5y": 97.05,
+      "signal": "偏卖",
+      "explanation": "10年美债收益率位于过去3年高位，对估值偏不利"
+    }
+  },
+  "valuation": {
+    "nasdaq100": {
+      "market": "纳斯达克100",
+      "trailing_pe": 31.9577,
+      "forward_pe": 20.6227,
+      "source_symbol": "QQQ",
+      "is_etf_proxy": true,
+      "pe_coverage": 0.9971,
+      "forward_pe_coverage": 0.9952,
+      "pe_date": "2026-08-07",
+      "forward_pe_date": "2026-08-07",
+      "date": "2026-08-07",
+      "source": "weekly-etf-report / ETF_PE_history.xlsx"
+    }
+  },
+  "overall_signal": {
+    "result": "中立",
+    "score": 0,
+    "buy_count": 2,
+    "neutral_count": 4,
+    "sell_count": 2,
+    "available_count": 8,
+    "missing_count": 0,
+    "details": [
+      {
+        "indicator": "VIX",
+        "signal": "中立",
+        "reason": "VIX位于过去3年中性区间",
+        "included": true
+      },
+      {
+        "indicator": "VXN",
+        "signal": "中立",
+        "reason": "VXN位于过去3年中性区间",
+        "included": true
+      },
+      {
+        "indicator": "Equity Put/Call Ratio",
+        "signal": "偏卖",
+        "reason": "Put/Call偏低，情绪偏乐观，反向信号偏卖",
+        "included": true
+      },
+      {
+        "indicator": "Fear & Greed Index",
+        "signal": "中立",
+        "reason": "恐惧贪婪指数处于中性区间",
+        "included": true
+      },
+      {
+        "indicator": "AAII Bull-Bear Spread",
+        "signal": "偏买",
+        "reason": "AAII悲观情绪明显高于乐观情绪，反向信号偏买",
+        "included": true
+      },
+      {
+        "indicator": "Gold / Copper Ratio",
+        "signal": "中立",
+        "reason": "黄金/铜比位于过去3年中性区间",
+        "included": true
+      },
+      {
+        "indicator": "10Y Treasury Yield",
+        "signal": "偏卖",
+        "reason": "10年美债收益率位于过去3年高位，对估值偏不利",
+        "included": true
+      },
+      {
+        "indicator": "纳斯达克100 Forward PE",
+        "signal": "偏买",
+        "reason": "纳斯达克100 Forward PE偏低，估值相对便宜",
+        "included": true
+      }
+    ],
+    "method_note": "VIX、VXN、Put/Call、Fear & Greed、AAII及Gold/Copper采用反向情绪信号；10Y Treasury采用方向信号；估值只读取QQQ的PE与Forward PE。",
+    "disclaimer": "仅供参考，不构成任何投资建议。"
+  },
+  "errors": []
+}
