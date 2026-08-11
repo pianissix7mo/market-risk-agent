@@ -88,6 +88,36 @@ jobs:
             --input output/latest_data.json \
             --output-dir output/media
 
+      - name: Generate YouTube title and description
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("output/latest_data.json").read_text(encoding="utf-8"))
+          signal = data["overall_signal"]
+          market_date = str(data["market_date"])
+          result = str(signal["result"])
+          buy = int(signal.get("buy_count", 0))
+          neutral = int(signal.get("neutral_count", 0))
+          sell = int(signal.get("sell_count", 0))
+
+          title = f"美股风险信号：{result}｜{market_date} #Shorts"
+          description = (
+              f"Market Risk Agent | {market_date}\n"
+              f"结论：{result}\n"
+              f"{buy}偏买 / {neutral}中立 / {sell}偏卖\n\n"
+              f"#美股 #NASDAQ #SP500 #VIX #MarketRisk #{result}\n"
+          )
+
+          output = Path("output/media/title_description.txt")
+          output.write_text(
+              f"TITLE\n{title}\n\nDESCRIPTION\n{description}",
+              encoding="utf-8",
+          )
+          print(output.read_text(encoding="utf-8"))
+          PY
+
       - name: Validate generated images
         run: |
           python - <<'PY'
@@ -106,7 +136,9 @@ jobs:
               with Image.open(card) as image:
                   assert image.size == (1080, 1920), (card, image.size)
                   assert image.mode == "RGB", (card, image.mode)
-          print("Validated four 1080x1920 RGB cards.")
+          metadata = Path("output/media/title_description.txt")
+          assert metadata.is_file() and metadata.stat().st_size > 0, metadata
+          print("Validated four 1080x1920 RGB cards and YouTube metadata.")
           PY
 
       - name: Validate final mobile-compatible MP4
@@ -163,6 +195,7 @@ jobs:
             output/latest_data.json
             output/media/*.png
             output/media/*.mp4
+            output/media/title_description.txt
           if-no-files-found: error
           retention-days: 7
 
@@ -192,6 +225,7 @@ jobs:
           - `media/02_sentiment.png`
           - `media/03_macro.png`
           - `media/04_summary.png`
+          - `media/title_description.txt`
           - `media/Market Risk Monitor YYYY-MM-DD.mp4`
           EOF
 
