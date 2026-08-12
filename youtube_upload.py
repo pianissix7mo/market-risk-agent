@@ -1,4 +1,6 @@
+import json
 import os
+import subprocess
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -32,6 +34,12 @@ def parse_metadata(path: Path) -> tuple[str, str]:
     if len(title) > 100:
         raise ValueError(f"YouTube title is too long ({len(title)} chars): {title}")
 
+    # Keep an explicit Shorts signal in both title/description metadata.
+    if "#shorts" not in title.lower():
+        title = f"{title} #Shorts"
+    if "#shorts" not in description.lower():
+        description = f"{description}\n\n#Shorts"
+
     return title, description
 
 
@@ -42,6 +50,44 @@ def find_video(media_dir: Path) -> Path:
             f"Expected exactly one Market Risk Monitor MP4 in {media_dir}, found {len(videos)}"
         )
     return videos[0]
+
+
+def inspect_short_format(video_path: Path) -> None:
+    probe = json.loads(
+        subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,sample_aspect_ratio,display_aspect_ratio:format=duration",
+                "-of",
+                "json",
+                str(video_path),
+            ],
+            text=True,
+        )
+    )
+
+    stream = probe["streams"][0]
+    width = int(stream["width"])
+    height = int(stream["height"])
+    duration = float(probe["format"]["duration"])
+    sar = stream.get("sample_aspect_ratio", "unknown")
+    dar = stream.get("display_aspect_ratio", "unknown")
+
+    print("Shorts format diagnostics:")
+    print(f"  resolution: {width}x{height}")
+    print(f"  duration: {duration:.3f}s")
+    print(f"  sample_aspect_ratio: {sar}")
+    print(f"  display_aspect_ratio: {dar}")
+
+    if width >= height:
+        raise RuntimeError(f"Video is not portrait: {width}x{height}")
+    if duration > 180.0:
+        raise RuntimeError(f"Video is longer than 3 minutes: {duration:.3f}s")
 
 
 def build_credentials() -> Credentials:
@@ -76,6 +122,7 @@ def upload_video(video_path: Path, title: str, description: str) -> str:
                 "title": title,
                 "description": description,
                 "categoryId": "27",
+                "tags": ["Shorts", "美股", "Market Risk"],
             },
             "status": {
                 "privacyStatus": privacy_status,
@@ -99,7 +146,8 @@ def upload_video(video_path: Path, title: str, description: str) -> str:
 
     video_id = response["id"]
     print(f"YouTube upload successful: {video_id}")
-    print(f"Video URL: https://youtu.be/{video_id}")
+    print(f"Standard URL: https://youtu.be/{video_id}")
+    print(f"Shorts URL: https://www.youtube.com/shorts/{video_id}")
     print(f"Privacy: {privacy_status}")
     return video_id
 
@@ -112,9 +160,10 @@ def main() -> None:
         raise FileNotFoundError(metadata_path)
 
     video_path = find_video(media_dir)
+    inspect_short_format(video_path)
     title, description = parse_metadata(metadata_path)
 
-    print(f"Uploading: {video_path}")
+    print(f"Uploading as Shorts-compatible portrait video: {video_path}")
     print(f"Title: {title}")
     upload_video(video_path, title, description)
 
