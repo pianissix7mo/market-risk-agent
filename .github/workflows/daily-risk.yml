@@ -199,6 +199,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload Short to YouTube (private test)
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_PRIVACY_STATUS: private
+        run: python youtube_upload.py
+
       - name: Publish latest media to latest-media branch
         run: |
           media_tmp=$(mktemp -d)
