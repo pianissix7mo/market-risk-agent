@@ -192,10 +192,14 @@ def validate_final_video(path: Path) -> dict[str, Any]:
     audio = audio_streams[0]
     duration = float(data["format"]["duration"])
     profile = str(video.get("profile", "")).strip().lower()
+    sar = str(video.get("sample_aspect_ratio", "")).strip()
+    dar = str(video.get("display_aspect_ratio", "")).strip()
     checks = {
         "duration": 15.8 <= duration <= 16.2,
         "width": int(video.get("width", 0)) == 1080,
         "height": int(video.get("height", 0)) == 1920,
+        "sample_aspect_ratio": sar == "1:1",
+        "display_aspect_ratio": dar == "9:16",
         "video_codec": str(video.get("codec_name", "")).lower() == "h264",
         "profile": profile in {"baseline", "constrained baseline"},
         "pixel_format": str(video.get("pix_fmt", "")).lower() == "yuv420p",
@@ -209,6 +213,8 @@ def validate_final_video(path: Path) -> dict[str, Any]:
         "duration_seconds": round(duration, 3),
         "width": int(video["width"]),
         "height": int(video["height"]),
+        "sample_aspect_ratio": sar,
+        "display_aspect_ratio": dar,
         "video_codec": video["codec_name"],
         "profile": video.get("profile"),
         "pixel_format": video.get("pix_fmt"),
@@ -234,6 +240,8 @@ def build_video_with_music(cards: list[Path], output: Path, title: str) -> dict[
                 "0:v:0",
                 "-map",
                 "1:a:0",
+                "-vf",
+                "setsar=1,setdar=9/16",
                 "-c:v",
                 "libx264",
                 "-profile:v",
@@ -259,6 +267,8 @@ def build_video_with_music(cards: list[Path], output: Path, title: str) -> dict[
                 "-shortest",
                 "-metadata",
                 f"title={title}",
+                "-aspect",
+                "9:16",
                 "-movflags",
                 "+faststart",
                 str(output),
