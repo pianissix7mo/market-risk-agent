@@ -16,7 +16,7 @@ import yfinance as yf
 VOL = {"vix": ("^VIX", "VIX", "标普500"), "vxn": ("^VXN", "VXN", "纳斯达克100")}
 HEADERS = {"User-Agent": "Mozilla/5.0 Chrome/124 Safari/537.36", "Accept-Language": "en-US,en;q=0.9"}
 PE_URL = "https://raw.githubusercontent.com/pianissix7mo/weekly-etf-report/main/etf_analyst_target_outputs/ETF_PE_history.xlsx"
-AAII_URL = "https://insights.aaii.com/feed"
+AAII_URL = "https://www.aaii.com/sentimentsurvey"
 
 
 def make_session():
@@ -151,33 +151,44 @@ def plain_text(raw):
 
 
 def parse_aaii(text):
-    m = re.search(r"This week.?s Sentiment Survey results\s*:?(.*?)(?:Historical averages|$)", text, re.I | re.S)
-    section = m.group(1) if m else text; values = []
-    for label in ["Bullish", "Neutral", "Bearish"]:
-        found = re.search(rf"{label}\s*:\s*([0-9]+(?:\.[0-9]+)?)%", section, re.I)
-        if not found: raise RuntimeError(f"AAII {label} value not found")
-        values.append(round(float(found.group(1)), 2))
-    return tuple(values)
+    text = text.replace("−", "-").replace("–", "-")
+    current = re.search(
+        r"This week.?s results\s+Week ending\s+([A-Za-z]+ \d{1,2}, \d{4})(.*?)(?:Cast your vote|Sentiment this week|Recent weekly results|$)",
+        text,
+        re.I | re.S,
+    )
+    if current:
+        as_of = datetime.strptime(current.group(1), "%B %d, %Y").date()
+        section = current.group(2)
+        values = []
+        for label in ["Bullish", "Neutral", "Bearish"]:
+            found = re.search(rf"{label}\s+([0-9]+(?:\.[0-9]+)?)%", section, re.I)
+            if not found: raise RuntimeError(f"AAII {label} value not found")
+            values.append(round(float(found.group(1)), 2))
+        bullish, neutral, bearish = values
+    else:
+        recent = re.search(
+            r"Recent weekly results\s+Week Ending\s+Sentiment Votes\s+Bullish Neutral Bearish\s+"
+            r"(\d{1,2}/\d{1,2}/\d{4})\s+([0-9]+(?:\.[0-9]+)?)%\s+"
+            r"([0-9]+(?:\.[0-9]+)?)%\s+([0-9]+(?:\.[0-9]+)?)%",
+            text,
+            re.I | re.S,
+        )
+        if not recent: raise RuntimeError("AAII current survey results not found")
+        as_of = datetime.strptime(recent.group(1), "%m/%d/%Y").date()
+        bullish, neutral, bearish = [round(float(recent.group(i)), 2) for i in range(2, 5)]
+    if not 99 <= bullish + neutral + bearish <= 101:
+        raise RuntimeError("AAII sentiment percentages failed sum check")
+    return as_of, bullish, neutral, bearish
 
 
 def fetch_aaii():
-    root = ET.fromstring(get(AAII_URL).content); tag = "{http://purl.org/rss/1.0/modules/content/}encoded"; posts = []
-    for item in root.findall(".//item"):
-        title = (item.findtext("title") or "").strip()
-        if "aaii sentiment survey" in title.lower():
-            posts.append(((item.findtext("link") or "").strip(), (item.findtext("pubDate") or "").strip(), item.findtext(tag) or item.findtext("description") or ""))
-    if not posts: raise RuntimeError("No AAII Sentiment Survey post found in official feed")
-    last_error = None
-    for link, published, body in posts[:8]:
-        try:
-            try: bullish, neutral, bearish = parse_aaii(plain_text(body))
-            except Exception: bullish, neutral, bearish = parse_aaii(plain_text(get(link).text))
-            spread = round(bullish - bearish, 2); signal, explanation = aaii_signal(spread)
-            try: as_of = parsedate_to_datetime(published).date().isoformat()
-            except Exception: as_of = ""
-            return {"bullish": bullish, "neutral": neutral, "bearish": bearish, "bull_bear_spread": spread, "date": as_of, "frequency": "weekly", "source": "AAII Sentiment Survey", "source_url": link, "signal": signal, "explanation": explanation}
-        except Exception as exc: last_error = exc
-    raise RuntimeError(f"Could not parse recent AAII survey posts: {last_error}")
+    as_of, bullish, neutral, bearish = parse_aaii(plain_text(get(AAII_URL).text))
+    age_days = (date.today() - as_of).days
+    if age_days < 0 or age_days > 10:
+        raise RuntimeError(f"AAII survey is stale or future-dated: {as_of.isoformat()} ({age_days} days old)")
+    spread = round(bullish - bearish, 2); signal, explanation = aaii_signal(spread)
+    return {"bullish": bullish, "neutral": neutral, "bearish": bearish, "bull_bear_spread": spread, "date": as_of.isoformat(), "frequency": "weekly", "source": "AAII Sentiment Survey", "source_url": AAII_URL, "signal": signal, "explanation": explanation}
 
 
 def fetch_gold_copper():
