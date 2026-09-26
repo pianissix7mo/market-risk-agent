@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from io import BytesIO
-import html, json, re, sys
+import html, json, re, sys, time
 from pathlib import Path
 import xml.etree.ElementTree as ET
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -17,6 +18,11 @@ VOL = {"vix": ("^VIX", "VIX", "标普500"), "vxn": ("^VXN", "VXN", "纳斯达克
 HEADERS = {"User-Agent": "Mozilla/5.0 Chrome/124 Safari/537.36", "Accept-Language": "en-US,en;q=0.9"}
 PE_URL = "https://raw.githubusercontent.com/pianissix7mo/weekly-etf-report/main/etf_analyst_target_outputs/ETF_PE_history.xlsx"
 AAII_URL = "https://www.aaii.com/sentimentsurvey"
+
+MIN_QQQ_PE_COVERAGE = 0.50
+MIN_AVAILABLE_INDICATORS = 6
+QQQ_PE_ATTEMPTS = 3
+QQQ_PE_RETRY_SECONDS = 15
 
 
 def make_session():
@@ -202,26 +208,188 @@ def fetch_treasury():
     return {"value": round(float(s.iloc[-1]), 4), "unit": "percent", "date": s.index[-1].date().isoformat(), "source": "Yahoo Finance ^TNX", "percentile_1y": p1, "percentile_3y": p3, "percentile_5y": p5, "signal": signal, "explanation": explanation}
 
 
-def fetch_qqq_pe():
+def _coverage(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(value) or value < 0:
+        return None
+    if value > 1.5:
+        value /= 100.0
+    return round(value, 4) if 0 <= value <= 1.0 else None
+
+
+def _fetch_qqq_pe_once(market_date=None):
     df = pd.read_excel(BytesIO(get(PE_URL).content), engine="openpyxl")
-    required = {"Date", "ETF", "PE Ratio", "Forward PE"}; missing = required.difference(df.columns)
-    if missing: raise RuntimeError(f"PE history missing columns: {sorted(missing)}")
-    df = df.copy(); df["Date"] = pd.to_datetime(df["Date"], errors="coerce"); df["ETF"] = df["ETF"].astype(str).str.upper().str.strip()
+    required = {
+        "Date", "ETF", "PE Ratio", "Forward PE",
+        "PE coverage", "Forward PE coverage",
+    }
+    missing = required.difference(df.columns)
+    if missing:
+        raise RuntimeError(f"PE history missing columns: {sorted(missing)}")
+
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df["ETF"] = df["ETF"].astype(str).str.upper().str.strip()
     for col in ["PE Ratio", "Forward PE", "PE coverage", "Forward PE coverage"]:
-        if col in df: df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
     rows = df[(df["ETF"] == "QQQ") & df["Date"].notna()].sort_values("Date")
-    if rows.empty: raise RuntimeError("No QQQ rows found in ETF_PE_history.xlsx")
-    pe_rows, fpe_rows = rows.dropna(subset=["PE Ratio"]), rows.dropna(subset=["Forward PE"])
-    if pe_rows.empty: raise RuntimeError("No valid QQQ PE Ratio found")
-    if fpe_rows.empty: raise RuntimeError("No valid QQQ Forward PE found")
-    pe_row, fpe_row = pe_rows.iloc[-1], fpe_rows.iloc[-1]
-    pe_date, fpe_date = pd.Timestamp(pe_row["Date"]).date().isoformat(), pd.Timestamp(fpe_row["Date"]).date().isoformat()
-    return {"nasdaq100": {"market": "纳斯达克100", "trailing_pe": num(pe_row["PE Ratio"]), "forward_pe": num(fpe_row["Forward PE"]), "source_symbol": "QQQ", "is_etf_proxy": True, "pe_coverage": num(pe_row.get("PE coverage")), "forward_pe_coverage": num(fpe_row.get("Forward PE coverage")), "pe_date": pe_date, "forward_pe_date": fpe_date, "date": max(pe_date, fpe_date), "source": "weekly-etf-report / ETF_PE_history.xlsx"}}
+    if rows.empty:
+        raise RuntimeError("No QQQ rows found in ETF_PE_history.xlsx")
+
+    # One coherent row only. Never mix a fresh trailing PE with an older forward PE.
+    row = rows.iloc[-1]
+    row_date = pd.Timestamp(row["Date"]).date()
+    if market_date:
+        expected = pd.Timestamp(market_date).date()
+        if row_date < expected:
+            raise RuntimeError(
+                f"QQQ PE history is stale: latest={row_date.isoformat()}, market_date={expected.isoformat()}"
+            )
+
+    trailing_pe = num(row["PE Ratio"])
+    forward_pe = num(row["Forward PE"])
+    pe_coverage = _coverage(row["PE coverage"])
+    forward_pe_coverage = _coverage(row["Forward PE coverage"])
+
+    if trailing_pe is None or forward_pe is None:
+        raise RuntimeError(
+            f"Latest QQQ PE row {row_date.isoformat()} is missing trailing or forward PE"
+        )
+    if pe_coverage is None or pe_coverage < MIN_QQQ_PE_COVERAGE:
+        raise RuntimeError(
+            f"Latest QQQ trailing PE coverage is too low: {pe_coverage}"
+        )
+    if forward_pe_coverage is None or forward_pe_coverage < MIN_QQQ_PE_COVERAGE:
+        raise RuntimeError(
+            f"Latest QQQ forward PE coverage is too low: {forward_pe_coverage}"
+        )
+
+    row_date_text = row_date.isoformat()
+    return {
+        "nasdaq100": {
+            "market": "纳斯达克100",
+            "trailing_pe": trailing_pe,
+            "forward_pe": forward_pe,
+            "source_symbol": "QQQ",
+            "is_etf_proxy": True,
+            "pe_coverage": pe_coverage,
+            "forward_pe_coverage": forward_pe_coverage,
+            "pe_date": row_date_text,
+            "forward_pe_date": row_date_text,
+            "date": row_date_text,
+            "source": "weekly-etf-report / ETF_PE_history.xlsx",
+        }
+    }
+
+
+def fetch_qqq_pe(market_date=None, attempts=QQQ_PE_ATTEMPTS, retry_seconds=QQQ_PE_RETRY_SECONDS):
+    """Wait briefly for the upstream ETF report, then fail closed if it is still stale."""
+    last_error = None
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            return _fetch_qqq_pe_once(market_date=market_date)
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            print(
+                f"QQQ PE not ready (attempt {attempt}/{attempts}): {exc}. "
+                f"Retrying in {retry_seconds}s..."
+            )
+            time.sleep(max(0, float(retry_seconds)))
+    raise RuntimeError(f"QQQ PE unavailable after {attempts} attempt(s): {last_error}")
 
 
 def safe(name, fn, errors, fallback):
     try: return fn()
     except Exception as exc: errors.append(f"{name}: {exc}"); return fallback
+
+
+def _iso_date(value):
+    if not value:
+        return None
+    try:
+        return pd.Timestamp(value).date()
+    except Exception:
+        return None
+
+
+def validate_publish_quality(market_date, vol, macro, valuation):
+    """Block publication when too much of the market snapshot is missing or stale."""
+    market_day = _iso_date(market_date)
+    if market_day is None:
+        raise RuntimeError("Market date is missing or invalid")
+
+    toronto_today = datetime.now(ZoneInfo("America/Toronto")).date()
+    market_age = (toronto_today - market_day).days
+    if market_age < 0 or market_age > 4:
+        raise RuntimeError(
+            f"Market date is stale or future-dated: {market_day.isoformat()} "
+            f"({market_age} days from Toronto today)"
+        )
+
+    qqq = valuation.get("nasdaq100", {})
+    metrics = {
+        "VIX": (vol.get("vix", {}).get("value"), vol.get("vix", {}).get("date"), 0),
+        "VXN": (vol.get("vxn", {}).get("value"), vol.get("vxn", {}).get("date"), 1),
+        "Equity Put/Call": (macro.get("equity_put_call", {}).get("value"), macro.get("equity_put_call", {}).get("date"), 4),
+        "Fear & Greed": (macro.get("fear_greed", {}).get("value"), macro.get("fear_greed", {}).get("date"), 4),
+        "AAII": (macro.get("aaii_sentiment", {}).get("bull_bear_spread"), macro.get("aaii_sentiment", {}).get("date"), 10),
+        "Gold/Copper": (macro.get("gold_copper_ratio", {}).get("value"), macro.get("gold_copper_ratio", {}).get("date"), 4),
+        "10Y Treasury": (macro.get("treasury_10y", {}).get("value"), macro.get("treasury_10y", {}).get("date"), 4),
+        "QQQ Forward PE": (qqq.get("forward_pe"), qqq.get("forward_pe_date") or qqq.get("date"), 4),
+    }
+
+    available = {name: value is not None for name, (value, _date, _lag) in metrics.items()}
+    required = ["VIX", "VXN", "10Y Treasury", "QQQ Forward PE"]
+    missing_required = [name for name in required if not available[name]]
+    if missing_required:
+        raise RuntimeError("Missing required indicators: " + ", ".join(missing_required))
+
+    available_count = sum(available.values())
+    if available_count < MIN_AVAILABLE_INDICATORS:
+        missing = [name for name, ok in available.items() if not ok]
+        raise RuntimeError(
+            f"Only {available_count}/{len(metrics)} indicators are valid; "
+            f"minimum is {MIN_AVAILABLE_INDICATORS}. Missing: {', '.join(missing)}"
+        )
+
+    source_age_days = {}
+    for name, (value, date_text, max_lag) in metrics.items():
+        if value is None:
+            continue
+        source_day = _iso_date(date_text)
+        if source_day is None:
+            raise RuntimeError(f"{name} has a value but no valid source date")
+        delta = (market_day - source_day).days
+        source_age_days[name] = delta
+        if abs(delta) > max_lag:
+            raise RuntimeError(
+                f"{name} is stale/incoherent: source={source_day.isoformat()}, "
+                f"market={market_day.isoformat()}, delta={delta}d, allowed={max_lag}d"
+            )
+
+    pe_coverage = _coverage(qqq.get("pe_coverage"))
+    fpe_coverage = _coverage(qqq.get("forward_pe_coverage"))
+    if pe_coverage is None or pe_coverage < MIN_QQQ_PE_COVERAGE:
+        raise RuntimeError(f"QQQ trailing PE coverage too low: {pe_coverage}")
+    if fpe_coverage is None or fpe_coverage < MIN_QQQ_PE_COVERAGE:
+        raise RuntimeError(f"QQQ forward PE coverage too low: {fpe_coverage}")
+
+    return {
+        "status": "pass",
+        "available_count": available_count,
+        "total_indicators": len(metrics),
+        "minimum_required": MIN_AVAILABLE_INDICATORS,
+        "required_indicators": required,
+        "qqq_min_pe_coverage": MIN_QQQ_PE_COVERAGE,
+        "source_age_days_vs_market_date": source_age_days,
+    }
 
 
 def overall(vol, macro, valuation):
@@ -254,8 +422,33 @@ def main():
         "gold_copper_ratio": safe("Gold/Copper", fetch_gold_copper, errors, {"value": None, "date": "", "source": "Yahoo Finance GC=F / HG=F", "percentile_1y": None, "percentile_3y": None, "percentile_5y": None, "signal": "中立", "explanation": "抓取失败"}),
         "treasury_10y": safe("10Y Treasury", fetch_treasury, errors, {"value": None, "unit": "percent", "date": "", "source": "Yahoo Finance ^TNX", "percentile_1y": None, "percentile_3y": None, "percentile_5y": None, "signal": "中立", "explanation": "抓取失败"}),
     }
-    valuation = safe("QQQ PE history", fetch_qqq_pe, errors, {"nasdaq100": {"market": "纳斯达克100", "trailing_pe": None, "forward_pe": None, "source_symbol": "QQQ", "is_etf_proxy": True, "pe_coverage": None, "forward_pe_coverage": None, "pe_date": "", "forward_pe_date": "", "date": "", "source": "weekly-etf-report / ETF_PE_history.xlsx"}})
-    payload = {"market_date": vol["vix"]["date"], "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"), "volatility": vol, "macro": macro, "valuation": valuation, "overall_signal": overall(vol, macro, valuation), "errors": errors}
+    market_date = vol["vix"]["date"]
+    valuation = safe(
+        "QQQ PE history",
+        lambda: fetch_qqq_pe(market_date=market_date),
+        errors,
+        {"nasdaq100": {"market": "纳斯达克100", "trailing_pe": None, "forward_pe": None, "source_symbol": "QQQ", "is_etf_proxy": True, "pe_coverage": None, "forward_pe_coverage": None, "pe_date": "", "forward_pe_date": "", "date": "", "source": "weekly-etf-report / ETF_PE_history.xlsx"}},
+    )
+
+    try:
+        quality_gate = validate_publish_quality(market_date, vol, macro, valuation)
+    except Exception as exc:
+        errors.append(f"Publish quality gate: {exc}")
+        print("ERROR: publication blocked by data-quality gate.", file=sys.stderr)
+        for error in errors:
+            print(f" - {error}", file=sys.stderr)
+        return 1
+
+    payload = {
+        "market_date": market_date,
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "volatility": vol,
+        "macro": macro,
+        "valuation": valuation,
+        "overall_signal": overall(vol, macro, valuation),
+        "quality_gate": quality_gate,
+        "errors": errors,
+    }
     out = Path(__file__).resolve().parent / "output"; out.mkdir(exist_ok=True); path = out / "latest_data.json"; path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False, indent=2)); print(f"\nSaved to: {path}"); return 0
 
