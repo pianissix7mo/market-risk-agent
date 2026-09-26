@@ -224,56 +224,79 @@ def validate_final_video(path: Path) -> dict[str, Any]:
 
 
 def build_video_with_music(cards: list[Path], output: Path, title: str) -> dict[str, Any]:
+    """Encode the four still cards and music in one ffmpeg pass."""
+    validate_cards(cards)
     music = ensure_music()
-    with tempfile.TemporaryDirectory() as temp_name:
-        silent_video = Path(temp_name) / "silent.mp4"
-        build_silent_video(cards, silent_video)
-        run(
+
+    command = ["ffmpeg", "-y"]
+    for card in cards:
+        command.extend(
             [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(silent_video),
-                "-i",
-                str(music),
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-vf",
-                "setsar=1,setdar=9/16",
-                "-c:v",
-                "libx264",
-                "-profile:v",
-                "baseline",
-                "-level:v",
-                "4.2",
-                "-pix_fmt",
-                "yuv420p",
-                "-preset",
-                "medium",
-                "-crf",
-                "23",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "160k",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
+                "-loop",
+                "1",
+                "-framerate",
+                str(FPS),
                 "-t",
-                str(DURATION_SECONDS),
-                "-shortest",
-                "-metadata",
-                f"title={title}",
-                "-aspect",
-                "9:16",
-                "-movflags",
-                "+faststart",
-                str(output),
+                str(SECONDS_PER_CARD),
+                "-i",
+                str(card),
             ]
         )
+    command.extend(["-i", str(music)])
+
+    video_filters = []
+    for index in range(len(cards)):
+        video_filters.append(
+            f"[{index}:v]trim=duration={SECONDS_PER_CARD},"
+            f"setpts=PTS-STARTPTS,fps={FPS},setsar=1,format=yuv420p[v{index}]"
+        )
+    concat_inputs = "".join(f"[v{index}]" for index in range(len(cards)))
+    filter_complex = ";".join(video_filters) + (
+        f";{concat_inputs}concat=n={len(cards)}:v=1:a=0,"
+        "setsar=1,setdar=9/16[vout]"
+    )
+
+    command.extend(
+        [
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[vout]",
+            "-map",
+            f"{len(cards)}:a:0",
+            "-c:v",
+            "libx264",
+            "-profile:v",
+            "baseline",
+            "-level:v",
+            "4.2",
+            "-pix_fmt",
+            "yuv420p",
+            "-preset",
+            "medium",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-t",
+            str(DURATION_SECONDS),
+            "-shortest",
+            "-metadata",
+            f"title={title}",
+            "-aspect",
+            "9:16",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+    run(command)
     return validate_final_video(output)
 
 
