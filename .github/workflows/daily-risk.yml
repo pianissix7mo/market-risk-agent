@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: daily-market-risk-short
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   generate-short:
@@ -29,15 +29,35 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
-      - name: Install system media tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - name: Restore installed Python packages
+        id: python-packages-cache
+        uses: actions/cache@v4
+        with:
+          path: .python-packages
+          key: ${{ runner.os }}-cp312-market-risk-${{ hashFiles('requirements.txt') }}
 
       - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt
+        if: steps.python-packages-cache.outputs.cache-hit != 'true'
+        run: python -m pip install --target .python-packages -r requirements.txt
+
+      - name: Add cached Python packages to path
+        run: echo "PYTHONPATH=$GITHUB_WORKSPACE/.python-packages" >> "$GITHUB_ENV"
+
+      - name: Ensure system media tools
+        shell: bash
+        run: |
+          packages=()
+          command -v ffmpeg >/dev/null 2>&1 || packages+=(ffmpeg)
+          if ! command -v fc-list >/dev/null 2>&1 || ! fc-list | grep -qi "Noto Sans CJK"; then
+            packages+=(fonts-noto-cjk)
+          fi
+          if (( ${#packages[@]} )); then
+            sudo apt-get update
+            sudo apt-get install -y "${packages[@]}"
+          else
+            echo "ffmpeg and Noto CJK fonts already available; skipping apt install."
+          fi
 
       - name: Generate latest market-risk JSON
         run: python daily_risk.py
@@ -63,7 +83,13 @@ jobs:
               ]
               if present and len(present) != 3:
                   raise AssertionError(f"{name} has incomplete percentile fields: {present}")
-          print("Validated JSON and percentile field consistency.")
+
+          quality = data.get("quality_gate") or {}
+          assert quality.get("status") == "pass", quality
+          assert int(quality.get("available_count", 0)) >= int(quality.get("minimum_required", 999)), quality
+          assert data["valuation"]["nasdaq100"].get("forward_pe") is not None
+          assert data["valuation"]["nasdaq100"].get("forward_pe_coverage") is not None
+          print("Validated JSON, percentile consistency, and publication quality gate.")
           PY
 
       - name: Confirm fixed music exists
@@ -205,12 +231,20 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_PRIVACY_STATUS: unlisted
+          YOUTUBE_CHANNEL_KEY: finance
+          UPLOAD_STATE_BRANCH: upload-state
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: python youtube_upload.py
 
       - name: Publish latest media to latest-media branch
         run: |
           media_tmp=$(mktemp -d)
           cp output/latest_data.json "$media_tmp/latest_data.json"
+          cp output/upload_receipt.json "$media_tmp/upload_receipt.json"
           cp -R output/media "$media_tmp/media"
 
           git config user.name "github-actions[bot]"
@@ -229,6 +263,7 @@ jobs:
           Files:
 
           - `latest_data.json`
+          - `upload_receipt.json`
           - `media/01_volatility.png`
           - `media/02_sentiment.png`
           - `media/03_macro.png`
@@ -237,6 +272,6 @@ jobs:
           - `media/Market Risk Monitor YYYY-MM-DD.mp4`
           EOF
 
-          git add README.md latest_data.json media
+          git add README.md latest_data.json upload_receipt.json media
           git commit -m "Publish latest 16-second Market Risk Monitor"
           git push --force origin HEAD:latest-media
