@@ -1,0 +1,9 @@
+# Production direct-dependency pins for Python 3.12.
+# Update deliberately, validate the workflow, then change this file so the cache key rotates.
+yfinance==0.2.65
+pandas==2.2.3
+requests==2.32.3
+openpyxl==3.1.5
+Pillow==11.3.0
+google-api-python-client==2.198.0
+google-auth==2.56.0
