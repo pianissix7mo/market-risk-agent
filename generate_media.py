@@ -49,6 +49,8 @@ def num(value: Any, digits: int = 2, suffix: str = "") -> str:
 def pct(value: Any) -> str:
     try:
         numeric = float(value)
+        if numeric <= 0 or numeric >= 100:
+            return f"P{int(round(numeric))}"
         # Keep normal percentile labels compact, but retain one decimal at
         # extreme tails so P1.19 is not misleadingly flattened to P1.
         return f"P{numeric:.1f}" if numeric < 5 or numeric > 95 else f"P{int(round(numeric))}"
@@ -178,18 +180,6 @@ def pill(im: Image.Image, v: Validator, name: str, box: Box, signal: str) -> Non
     text(d, v, name, (x0 + 28, y0 + 8, x1 - 10, y1 - 8), signal, 27, minimum=21, bold=True, fill=color, align="center", valign="middle", max_lines=1)
 
 
-def vol_signal(value: Any) -> tuple[str, str]:
-    try:
-        x = float(value)
-    except (TypeError, ValueError):
-        return "中立", "缺少过去3年分位数据"
-    if x >= 75:
-        return "偏买", "波动处于过去3年高位，反向信号偏买。"
-    if x <= 25:
-        return "偏卖", "波动处于过去3年低位，反向信号偏卖。"
-    return "中立", "波动处于过去3年中性区间。"
-
-
 def percentile_row(im: Image.Image, v: Validator, prefix: str, box: Box, data: dict[str, Any], color: str) -> None:
     d = ImageDraw.Draw(im)
     gap = 16
@@ -282,10 +272,8 @@ def render_volatility(data: dict[str, Any], output: Path) -> None:
     im, v = bg(), Validator("01_volatility")
     header(im, v, str(data["market_date"]), "波动率")
     vx, vn = data["volatility"]["vix"], data["volatility"]["vxn"]
-    sx, nx = vol_signal(vx.get("percentile_3y"))
-    sn, nn = vol_signal(vn.get("percentile_3y"))
-    indicator(im, v, "vix", (L, 386, R, 1000), "VIX", "标普500波动率", num(vx.get("value")), sx, vx, nx)
-    indicator(im, v, "vxn", (L, 1028, R, 1642), "VXN", "纳斯达克100波动率", num(vn.get("value")), sn, vn, nn)
+    indicator(im, v, "vix", (L, 386, R, 1000), "VIX", "标普500波动率", num(vx.get("value")), str(vx.get("signal", "中立")), vx, str(vx.get("explanation", "")))
+    indicator(im, v, "vxn", (L, 1028, R, 1642), "VXN", "纳斯达克100波动率", num(vn.get("value")), str(vn.get("signal", "中立")), vn, str(vn.get("explanation", "")))
     footer(im, v)
     _save(im, v, output)
 
@@ -314,14 +302,6 @@ def render_macro(data: dict[str, Any], output: Path) -> None:
     _save(im, v, output)
 
 
-def qqq_signal(value: Any) -> str:
-    try:
-        x = float(value)
-    except (TypeError, ValueError):
-        return "中立"
-    return "偏买" if x <= 22 else "偏卖" if x >= 30 else "中立"
-
-
 def render_summary(data: dict[str, Any], output: Path) -> None:
     im, v = bg(), Validator("04_summary")
     header(im, v, str(data["market_date"]), "估值与综合判断")
@@ -348,7 +328,7 @@ def render_summary(data: dict[str, Any], output: Path) -> None:
         text(d, v, f"count-{i}-label", (x + 8, 660, x + 155, 706), label, 20, minimum=15, bold=True, fill=COL["muted"], valign="middle", max_lines=1)
         text(d, v, f"count-{i}", (x + 160, 656, x + cw - 12, 712), str(value if value is not None else "--"), 36, minimum=27, bold=True, fill=c, align="right", valign="middle", max_lines=1)
     q = data["valuation"]["nasdaq100"]
-    trail, forward, vs = num(q.get("trailing_pe"), 2, "x"), num(q.get("forward_pe"), 2, "x"), qqq_signal(q.get("forward_pe"))
+    trail, forward, vs = num(q.get("trailing_pe"), 2, "x"), num(q.get("forward_pe"), 2, "x"), str(q.get("signal", "中立"))
     card(im, (L, 782, R, 1062))
     text(d, v, "valuation-title", (L + 34, 808, R - 34, 850), "QQQ 估值", 32, minimum=26, bold=True, align="center", max_lines=1)
     vals = ((L + 34, 518, "QQQ Trailing PE", trail, "当前估值", COL["text"]), (562, R - 34, "QQQ Forward PE", forward, vs, sig_color(vs)))
