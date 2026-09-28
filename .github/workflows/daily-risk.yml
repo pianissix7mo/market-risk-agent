@@ -34,15 +34,20 @@ jobs:
         id: python-packages-cache
         uses: actions/cache@v4
         with:
-          path: .python-packages
-          key: ${{ runner.os }}-cp312-market-risk-${{ hashFiles('requirements.txt') }}
+          path: ~/.cache/market-risk-python-packages
+          key: ${{ runner.os }}-cp312-market-risk-v2-${{ hashFiles('requirements.lock') }}
 
       - name: Install Python dependencies
         if: steps.python-packages-cache.outputs.cache-hit != 'true'
-        run: python -m pip install --target .python-packages -r requirements.txt
+        run: |
+          mkdir -p "$HOME/.cache/market-risk-python-packages"
+          python -m pip install --target "$HOME/.cache/market-risk-python-packages" -r requirements.lock
 
       - name: Add cached Python packages to path
-        run: echo "PYTHONPATH=$GITHUB_WORKSPACE/.python-packages" >> "$GITHUB_ENV"
+        run: echo "PYTHONPATH=$HOME/.cache/market-risk-python-packages" >> "$GITHUB_ENV"
+
+      - name: Validate Python sources
+        run: python -m py_compile daily_risk.py generate_media.py generate_daily_short.py youtube_upload.py
 
       - name: Ensure system media tools
         shell: bash
