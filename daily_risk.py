@@ -16,13 +16,15 @@ import yfinance as yf
 
 VOL = {"vix": ("^VIX", "VIX", "标普500"), "vxn": ("^VXN", "VXN", "纳斯达克100")}
 HEADERS = {"User-Agent": "Mozilla/5.0 Chrome/124 Safari/537.36", "Accept-Language": "en-US,en;q=0.9"}
-PE_URL = "https://raw.githubusercontent.com/pianissix7mo/weekly-etf-report/main/etf_analyst_target_outputs/ETF_PE_history.xlsx"
+PE_REPO = "pianissix7mo/weekly-etf-report"
+PE_PATH = "etf_analyst_target_outputs/ETF_PE_history.xlsx"
+PE_COMMITS_API = f"https://api.github.com/repos/{PE_REPO}/commits"
 AAII_URL = "https://www.aaii.com/sentimentsurvey"
 
 MIN_QQQ_PE_COVERAGE = 0.50
 MIN_AVAILABLE_INDICATORS = 6
-QQQ_PE_ATTEMPTS = 3
-QQQ_PE_RETRY_SECONDS = 15
+QQQ_PE_ATTEMPTS = 6
+QQQ_PE_RETRY_SECONDS = 60
 
 
 def make_session():
@@ -220,8 +222,22 @@ def _coverage(value):
     return round(value, 4) if 0 <= value <= 1.0 else None
 
 
+def _latest_pe_source():
+    response = get(
+        f"{PE_COMMITS_API}?sha=main&path={PE_PATH}&per_page=1"
+    ).json()
+    if not isinstance(response, list) or not response:
+        raise RuntimeError("Could not resolve the latest ETF_PE_history.xlsx commit")
+    sha = str(response[0].get("sha") or "").strip()
+    if not sha:
+        raise RuntimeError("Latest ETF_PE_history.xlsx commit is missing a SHA")
+    url = f"https://raw.githubusercontent.com/{PE_REPO}/{sha}/{PE_PATH}"
+    return url, sha
+
+
 def _fetch_qqq_pe_once(market_date=None):
-    df = pd.read_excel(BytesIO(get(PE_URL).content), engine="openpyxl")
+    pe_url, source_commit = _latest_pe_source()
+    df = pd.read_excel(BytesIO(get(pe_url).content), engine="openpyxl")
     required = {
         "Date", "ETF", "PE Ratio", "Forward PE",
         "PE coverage", "Forward PE coverage",
@@ -269,6 +285,7 @@ def _fetch_qqq_pe_once(market_date=None):
         )
 
     row_date_text = row_date.isoformat()
+    signal, explanation = qqq_pe_signal(forward_pe)
     return {
         "nasdaq100": {
             "market": "纳斯达克100",
@@ -282,12 +299,20 @@ def _fetch_qqq_pe_once(market_date=None):
             "forward_pe_date": row_date_text,
             "date": row_date_text,
             "source": "weekly-etf-report / ETF_PE_history.xlsx",
+            "source_commit": source_commit,
+            "signal": signal,
+            "explanation": explanation,
         }
     }
 
 
 def fetch_qqq_pe(market_date=None, attempts=QQQ_PE_ATTEMPTS, retry_seconds=QQQ_PE_RETRY_SECONDS):
-    """Wait briefly for the upstream ETF report, then fail closed if it is still stale."""
+    """Wait for the upstream ETF report, then fail closed if it is still stale.
+
+    Each attempt resolves the latest commit touching ETF_PE_history.xlsx and
+    downloads that immutable SHA, avoiding raw.githubusercontent branch-cache
+    ambiguity while still allowing the upstream workflow time to finish.
+    """
     last_error = None
     attempts = max(1, int(attempts))
     for attempt in range(1, attempts + 1):
@@ -395,13 +420,13 @@ def validate_publish_quality(market_date, vol, macro, valuation):
 def overall(vol, macro, valuation):
     details = []
     for key in ["vix", "vxn"]:
-        item = vol[key]; signal, reason = vol_signal(item["label"], item["percentile_3y"])
-        details.append({"indicator": item["label"], "signal": signal, "reason": reason, "included": item["value"] is not None})
+        item = vol[key]
+        details.append({"indicator": item["label"], "signal": item["signal"], "reason": item["explanation"], "included": item["value"] is not None})
     for key, label in [("equity_put_call", "Equity Put/Call Ratio"), ("fear_greed", "Fear & Greed Index"), ("aaii_sentiment", "AAII Bull-Bear Spread"), ("gold_copper_ratio", "Gold / Copper Ratio"), ("treasury_10y", "10Y Treasury Yield")]:
         item = macro[key]; available = item.get("bull_bear_spread") is not None if key == "aaii_sentiment" else item.get("value") is not None
         details.append({"indicator": label, "signal": item["signal"], "reason": item["explanation"], "included": available})
-    qqq = valuation["nasdaq100"]; signal, reason = qqq_pe_signal(qqq["forward_pe"])
-    details.append({"indicator": "纳斯达克100 Forward PE", "signal": signal, "reason": reason, "included": qqq["forward_pe"] is not None})
+    qqq = valuation["nasdaq100"]
+    details.append({"indicator": "纳斯达克100 Forward PE", "signal": qqq["signal"], "reason": qqq["explanation"], "included": qqq["forward_pe"] is not None})
     valid = [x for x in details if x["included"]]; buy = sum(x["signal"] == "偏买" for x in valid); neutral = sum(x["signal"] == "中立" for x in valid); sell = sum(x["signal"] == "偏卖" for x in valid); score = buy - sell
     return {"result": "偏买" if score >= 2 else "偏卖" if score <= -2 else "中立", "score": score, "buy_count": buy, "neutral_count": neutral, "sell_count": sell, "available_count": len(valid), "missing_count": len(details) - len(valid), "details": details, "method_note": "VIX、VXN、Put/Call、Fear & Greed、AAII及Gold/Copper采用反向情绪信号；10Y Treasury采用方向信号；估值只读取QQQ的PE与Forward PE。", "disclaimer": "仅供参考，不构成任何投资建议。"}
 
@@ -411,9 +436,11 @@ def main():
     for key, (symbol, label, market) in VOL.items():
         try:
             s = close_series(symbol)
-            vol[key] = {"label": label, "market": market, "source_symbol": symbol, "value": round(float(s.iloc[-1]), 4), "percentile_1y": pct(s, 1), "percentile_3y": pct(s, 3), "percentile_5y": pct(s, 5), "date": s.index[-1].date().isoformat(), "source": "Yahoo Finance"}
+            p1, p3, p5 = pct(s, 1), pct(s, 3), pct(s, 5)
+            signal, explanation = vol_signal(label, p3)
+            vol[key] = {"label": label, "market": market, "source_symbol": symbol, "value": round(float(s.iloc[-1]), 4), "percentile_1y": p1, "percentile_3y": p3, "percentile_5y": p5, "date": s.index[-1].date().isoformat(), "source": "Yahoo Finance", "signal": signal, "explanation": explanation}
         except Exception as exc:
-            errors.append(f"{label} ({symbol}): {exc}"); vol[key] = {"label": label, "market": market, "source_symbol": symbol, "value": None, "percentile_1y": None, "percentile_3y": None, "percentile_5y": None, "date": "", "source": "Yahoo Finance"}
+            errors.append(f"{label} ({symbol}): {exc}"); vol[key] = {"label": label, "market": market, "source_symbol": symbol, "value": None, "percentile_1y": None, "percentile_3y": None, "percentile_5y": None, "date": "", "source": "Yahoo Finance", "signal": "中立", "explanation": f"{label}抓取失败"}
     if vol["vix"]["value"] is None: print("ERROR: VIX data is required.", file=sys.stderr); return 1
     macro = {
         "equity_put_call": safe("Equity Put/Call", fetch_put_call, errors, {"value": None, "date": "", "source": "Cboe", "signal": "中立", "explanation": "抓取失败"}),
@@ -427,7 +454,7 @@ def main():
         "QQQ PE history",
         lambda: fetch_qqq_pe(market_date=market_date),
         errors,
-        {"nasdaq100": {"market": "纳斯达克100", "trailing_pe": None, "forward_pe": None, "source_symbol": "QQQ", "is_etf_proxy": True, "pe_coverage": None, "forward_pe_coverage": None, "pe_date": "", "forward_pe_date": "", "date": "", "source": "weekly-etf-report / ETF_PE_history.xlsx"}},
+        {"nasdaq100": {"market": "纳斯达克100", "trailing_pe": None, "forward_pe": None, "source_symbol": "QQQ", "is_etf_proxy": True, "pe_coverage": None, "forward_pe_coverage": None, "pe_date": "", "forward_pe_date": "", "date": "", "source": "weekly-etf-report / ETF_PE_history.xlsx", "source_commit": None, "signal": "中立", "explanation": "纳斯达克100 Forward PE抓取失败"}},
     )
 
     try:
