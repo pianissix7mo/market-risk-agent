@@ -1,0 +1,58 @@
+name: Validate Market Risk Code
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "daily_risk.py"
+      - "generate_media.py"
+      - "generate_daily_short.py"
+      - "youtube_upload.py"
+      - "requirements.lock"
+      - ".github/workflows/daily-risk.yml"
+      - ".github/workflows/validate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.lock
+
+      - name: Compile production Python
+        run: python -m py_compile daily_risk.py generate_media.py generate_daily_short.py youtube_upload.py
+
+      - name: Run lightweight invariants
+        run: |
+          python - <<'PY'
+          import generate_media
+          import daily_risk
+
+          assert generate_media.pct(100.0) == "P100"
+          assert generate_media.pct(0.0) == "P0"
+          assert not hasattr(generate_media, "vol_signal")
+          assert not hasattr(generate_media, "qqq_signal")
+
+          url, sha = daily_risk._latest_pe_source()
+          assert len(sha) == 40, sha
+          assert f"/{sha}/" in url, url
+          valuation = daily_risk._fetch_qqq_pe_once()
+          qqq = valuation["nasdaq100"]
+          assert qqq["source_commit"] == sha or len(qqq["source_commit"]) == 40
+          assert qqq["signal"] in {"偏买", "中立", "偏卖"}
+          assert qqq["forward_pe"] is not None
+          assert qqq["forward_pe_coverage"] is not None
+          print("Market Risk lightweight validation passed.")
+          PY
