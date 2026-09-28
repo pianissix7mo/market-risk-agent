@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -24,12 +25,25 @@ EXPECTED_CARD_NAMES = [
 
 
 def run(command: list[str], *, quiet: bool = True) -> None:
-    subprocess.run(
-        command,
-        check=True,
-        stdout=subprocess.DEVNULL if quiet else None,
-        stderr=subprocess.DEVNULL if quiet else None,
-    )
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE if quiet else None,
+            stderr=subprocess.PIPE if quiet else None,
+            text=quiet,
+        )
+    except subprocess.CalledProcessError as exc:
+        if quiet:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            if stdout:
+                print("Command stdout (tail):", file=sys.stderr)
+                print("\n".join(stdout.splitlines()[-40:]), file=sys.stderr)
+            if stderr:
+                print("Command stderr (tail):", file=sys.stderr)
+                print("\n".join(stderr.splitlines()[-80:]), file=sys.stderr)
+        raise
 
 
 def probe_json(path: Path) -> dict[str, Any]:
