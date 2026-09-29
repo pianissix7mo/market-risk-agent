@@ -1,4 +1,16 @@
 {
-  "version": 1,
-  "uploads": {}
+  "uploads": {
+    "finance:2026-09-28": {
+      "channel": "finance",
+      "market_date": "2026-09-28",
+      "privacy": "unlisted",
+      "run_attempt": "1",
+      "run_id": "36504980645",
+      "status": "pending",
+      "title": "美股风险信号：中立｜2026-09-28 #Shorts",
+      "updated_at": "2026-09-29T00:50:50+00:00",
+      "video_id": null
+    }
+  },
+  "version": 1
 }
