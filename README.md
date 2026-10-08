@@ -1,6 +1,6 @@
 # Market Risk Agent
 
-每日生成一条 9:16 的 Market Risk Monitor Short，并上传到 finance YouTube channel（默认 unlisted）。
+每日生成一条 9:16 的 Market Risk Monitor Short，并上传到 finance YouTube channel（默认 public，上传后直接公开）。
 
 ## 当前数据
 
