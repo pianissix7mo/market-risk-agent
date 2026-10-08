@@ -235,7 +235,7 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          YOUTUBE_PRIVACY_STATUS: unlisted
+          YOUTUBE_PRIVACY_STATUS: public
           YOUTUBE_CHANNEL_KEY: finance
           UPLOAD_STATE_BRANCH: upload-state
           GITHUB_TOKEN: ${{ github.token }}
