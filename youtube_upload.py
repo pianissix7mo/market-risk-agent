@@ -110,7 +110,7 @@ def build_credentials() -> Credentials:
 
 
 def privacy_status() -> str:
-    value = os.environ.get("YOUTUBE_PRIVACY_STATUS", "unlisted").strip().lower()
+    value = os.environ.get("YOUTUBE_PRIVACY_STATUS", "public").strip().lower()
     if value not in {"private", "unlisted", "public"}:
         raise ValueError(f"Invalid YOUTUBE_PRIVACY_STATUS: {value}")
     return value
