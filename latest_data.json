@@ -1,0 +1,186 @@
+{
+  "market_date": "2026-10-16",
+  "generated_at": "2026-10-16T23:16:30+00:00",
+  "volatility": {
+    "vix": {
+      "label": "VIX",
+      "market": "标普500",
+      "source_symbol": "^VIX",
+      "value": 19.99,
+      "percentile_1y": 81.5,
+      "percentile_3y": 82.54,
+      "percentile_5y": 67.3,
+      "date": "2026-10-16",
+      "source": "Yahoo Finance",
+      "signal": "偏买",
+      "explanation": "VIX位于过去3年高位，恐慌偏高，反向信号偏买"
+    },
+    "vxn": {
+      "label": "VXN",
+      "market": "纳斯达克100",
+      "source_symbol": "^VXN",
+      "value": 22.89,
+      "percentile_1y": 45.24,
+      "percentile_3y": 68.92,
+      "percentile_5y": 53.91,
+      "date": "2026-10-15",
+      "source": "Yahoo Finance",
+      "signal": "中立",
+      "explanation": "VXN位于过去3年中性区间"
+    }
+  },
+  "macro": {
+    "equity_put_call": {
+      "value": 0.62,
+      "date": "2026-10-15",
+      "source": "Cboe",
+      "signal": "中立",
+      "explanation": "Put/Call处于中性区间"
+    },
+    "fear_greed": {
+      "value": 17.94,
+      "rating": "extreme fear",
+      "date": "2026-10-16",
+      "source": "CNN Fear & Greed",
+      "signal": "偏买",
+      "explanation": "处于极度恐惧区间，反向信号偏买"
+    },
+    "aaii_sentiment": {
+      "bullish": 38.7,
+      "neutral": 19.7,
+      "bearish": 41.6,
+      "bull_bear_spread": -2.9,
+      "date": "2026-10-14",
+      "frequency": "weekly",
+      "source": "AAII Sentiment Survey",
+      "source_url": "https://www.aaii.com/sentimentsurvey",
+      "signal": "中立",
+      "explanation": "AAII Bull-Bear Spread未进入极端区间"
+    },
+    "gold_copper_ratio": {
+      "value": 638.022,
+      "date": "2026-10-16",
+      "source": "Yahoo Finance GC=F / HG=F",
+      "percentile_1y": 6.35,
+      "percentile_3y": 45.84,
+      "percentile_5y": 67.41,
+      "signal": "中立",
+      "explanation": "黄金/铜比位于过去3年中性区间",
+      "note": "绝对值受期货报价单位影响，综合判断只使用历史百分位。"
+    },
+    "treasury_10y": {
+      "value": 5.098,
+      "unit": "percent",
+      "date": "2026-10-16",
+      "source": "Yahoo Finance ^TNX",
+      "percentile_1y": 93.65,
+      "percentile_3y": 97.88,
+      "percentile_5y": 98.73,
+      "signal": "偏卖",
+      "explanation": "10年美债收益率位于过去3年高位，对估值偏不利"
+    }
+  },
+  "valuation": {
+    "nasdaq100": {
+      "market": "纳斯达克100",
+      "trailing_pe": 28.8292,
+      "forward_pe": 18.5314,
+      "source_symbol": "QQQ",
+      "is_etf_proxy": true,
+      "pe_coverage": 0.9916,
+      "forward_pe_coverage": 0.9897,
+      "pe_date": "2026-10-16",
+      "forward_pe_date": "2026-10-16",
+      "date": "2026-10-16",
+      "source": "weekly-etf-report / ETF_PE_history.xlsx",
+      "source_commit": "63f23f7e0f6d4e6d5a574c5382b1a1d8982fa4fe",
+      "signal": "偏买",
+      "explanation": "纳斯达克100 Forward PE偏低，估值相对便宜"
+    }
+  },
+  "overall_signal": {
+    "result": "偏买",
+    "score": 2,
+    "buy_count": 3,
+    "neutral_count": 4,
+    "sell_count": 1,
+    "available_count": 8,
+    "missing_count": 0,
+    "details": [
+      {
+        "indicator": "VIX",
+        "signal": "偏买",
+        "reason": "VIX位于过去3年高位，恐慌偏高，反向信号偏买",
+        "included": true
+      },
+      {
+        "indicator": "VXN",
+        "signal": "中立",
+        "reason": "VXN位于过去3年中性区间",
+        "included": true
+      },
+      {
+        "indicator": "Equity Put/Call Ratio",
+        "signal": "中立",
+        "reason": "Put/Call处于中性区间",
+        "included": true
+      },
+      {
+        "indicator": "Fear & Greed Index",
+        "signal": "偏买",
+        "reason": "处于极度恐惧区间，反向信号偏买",
+        "included": true
+      },
+      {
+        "indicator": "AAII Bull-Bear Spread",
+        "signal": "中立",
+        "reason": "AAII Bull-Bear Spread未进入极端区间",
+        "included": true
+      },
+      {
+        "indicator": "Gold / Copper Ratio",
+        "signal": "中立",
+        "reason": "黄金/铜比位于过去3年中性区间",
+        "included": true
+      },
+      {
+        "indicator": "10Y Treasury Yield",
+        "signal": "偏卖",
+        "reason": "10年美债收益率位于过去3年高位，对估值偏不利",
+        "included": true
+      },
+      {
+        "indicator": "纳斯达克100 Forward PE",
+        "signal": "偏买",
+        "reason": "纳斯达克100 Forward PE偏低，估值相对便宜",
+        "included": true
+      }
+    ],
+    "method_note": "VIX、VXN、Put/Call、Fear & Greed、AAII及Gold/Copper采用反向情绪信号；10Y Treasury采用方向信号；估值只读取QQQ的PE与Forward PE。",
+    "disclaimer": "仅供参考，不构成任何投资建议。"
+  },
+  "quality_gate": {
+    "status": "pass",
+    "available_count": 8,
+    "total_indicators": 8,
+    "minimum_required": 6,
+    "required_indicators": [
+      "VIX",
+      "VXN",
+      "10Y Treasury",
+      "QQQ Forward PE"
+    ],
+    "qqq_min_pe_coverage": 0.5,
+    "source_age_days_vs_market_date": {
+      "VIX": 0,
+      "VXN": 1,
+      "Equity Put/Call": 1,
+      "Fear & Greed": 0,
+      "AAII": 2,
+      "Gold/Copper": 0,
+      "10Y Treasury": 0,
+      "QQQ Forward PE": 0
+    }
+  },
+  "errors": []
+}
