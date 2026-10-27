@@ -208,6 +208,17 @@
       "title": "美股风险信号：偏买｜2026-10-23 #Shorts",
       "updated_at": "2026-10-23T23:46:37+00:00",
       "video_id": "xOXXKs6MnHE"
+    },
+    "finance:2026-10-26": {
+      "channel": "finance",
+      "market_date": "2026-10-26",
+      "privacy": "public",
+      "run_attempt": "1",
+      "run_id": "40425131255",
+      "status": "pending",
+      "title": "美股风险信号：中立｜2026-10-26 #Shorts",
+      "updated_at": "2026-10-27T00:16:04+00:00",
+      "video_id": null
     }
   },
   "version": 1
