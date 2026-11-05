@@ -274,6 +274,17 @@
       "title": "美股风险信号：偏买｜2026-11-03 #Shorts",
       "updated_at": "2026-11-04T01:56:11+00:00",
       "video_id": "cRWSv-UIepo"
+    },
+    "finance:2026-11-04": {
+      "channel": "finance",
+      "market_date": "2026-11-04",
+      "privacy": "public",
+      "run_attempt": "1",
+      "run_id": "41952203903",
+      "status": "pending",
+      "title": "美股风险信号：中立｜2026-11-04 #Shorts",
+      "updated_at": "2026-11-05T02:02:13+00:00",
+      "video_id": null
     }
   },
   "version": 1
