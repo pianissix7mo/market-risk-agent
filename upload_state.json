@@ -307,6 +307,17 @@
       "title": "美股风险信号：偏买｜2026-11-06 #Shorts",
       "updated_at": "2026-11-07T01:39:39+00:00",
       "video_id": "puMzmsiUs_U"
+    },
+    "finance:2026-11-09": {
+      "channel": "finance",
+      "market_date": "2026-11-09",
+      "privacy": "public",
+      "run_attempt": "1",
+      "run_id": "42752766217",
+      "status": "pending",
+      "title": "美股风险信号：偏买｜2026-11-09 #Shorts",
+      "updated_at": "2026-11-10T04:09:39+00:00",
+      "video_id": null
     }
   },
   "version": 1
